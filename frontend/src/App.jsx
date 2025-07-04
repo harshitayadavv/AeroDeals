@@ -25,7 +25,7 @@ function App() {
     setLoading(true);
     try {
       const response = await fetch(
-        `https://aerodeals-backend.onrender.com/search?origin=${origin}&destination=${destination}&start_date=${startDate}&end_date=${endDate}`
+        `https://aero-deals-backend.onrender.com/search?origin=${origin}&destination=${destination}&start_date=${startDate}&end_date=${endDate}`
       );
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
