@@ -11,7 +11,7 @@ function App() {
 
   const handleSearch = async () => {
     setErrorMsg(""); // Clear previous errors
-    
+
     if (!origin || !destination || !startDate || !endDate) {
       setErrorMsg("Please fill in all fields");
       return;
@@ -25,7 +25,7 @@ function App() {
     setLoading(true);
     try {
       const response = await fetch(
-        `http://127.0.0.1:8000/search?origin=${origin}&destination=${destination}&start_date=${startDate}&end_date=${endDate}`
+        `https://aerodeals-backend.onrender.com/search?origin=${origin}&destination=${destination}&start_date=${startDate}&end_date=${endDate}`
       );
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
