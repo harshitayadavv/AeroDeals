@@ -1,6 +1,14 @@
 import { useState } from "react";
+import Tabs from "./components/Tabs";
+import SearchHistory from "./components/SearchHistory";
+import SavedSearches from "./components/SavedSearches";
+import FlightDetails from "./components/FlightDetails";
+import AirportSearch from "./components/AirportSearch";  // ✅ ADD THIS LINE
+
+const API_URL = "http://127.0.0.1:8000";
 
 function App() {
+  const [activeTab, setActiveTab] = useState("search");
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -8,9 +16,11 @@ function App() {
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [selectedSearchId, setSelectedSearchId] = useState(null);
 
   const handleSearch = async () => {
-    setErrorMsg(""); // Clear previous errors
+    setErrorMsg("");
+    setResults(null);
 
     if (!origin || !destination || !startDate || !endDate) {
       setErrorMsg("Please fill in all fields");
@@ -25,7 +35,7 @@ function App() {
     setLoading(true);
     try {
       const response = await fetch(
-        `https://aero-deals-backend.onrender.com/search?origin=${origin}&destination=${destination}&start_date=${startDate}&end_date=${endDate}`
+        `${API_URL}/search?origin=${origin}&destination=${destination}&start_date=${startDate}&end_date=${endDate}`
       );
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
@@ -39,99 +49,174 @@ function App() {
     setLoading(false);
   };
 
+  const handleSaveCurrentSearch = async () => {
+    if (!results || !results.search_id) {
+      alert("No search to save");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/save/${results.search_id}`, {
+        method: "POST",
+      });
+      if (!response.ok) throw new Error("Failed to save");
+      
+      alert("✅ Search saved successfully! Check the Saved tab.");
+    } catch (err) {
+      alert("❌ Failed to save search");
+      console.error(err);
+    }
+  };
+
+  const handleViewDetails = (searchId) => {
+    setSelectedSearchId(searchId);
+  };
+
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
-      <h1 className="text-3xl font-bold text-center mb-1">✈️ AeroDeals</h1>
-      <p className="text-center text-gray-400 mb-6 italic">
+      <h1 className="text-4xl font-bold text-center mb-2">✈️ AeroDeals</h1>
+      <p className="text-center text-gray-400 mb-8 italic">
         Find the best flights between your chosen dates
       </p>
 
-      <div className="max-w-xl mx-auto space-y-6">
-        <div className="grid md:grid-cols-2 gap-4">
-          <div>
-            <label className="block mb-1">Origin</label>
-            <input
-              type="text"
-              className="w-full p-2 rounded bg-gray-800 text-white"
-              value={origin}
-              onChange={(e) => setOrigin(e.target.value.toUpperCase())}
-              placeholder="e.g., DEL"
-            />
-          </div>
+      <div className="max-w-6xl mx-auto">
+        <Tabs activeTab={activeTab} setActiveTab={setActiveTab} />
 
-          <div>
-            <label className="block mb-1">Destination</label>
-            <input
-              type="text"
-              className="w-full p-2 rounded bg-gray-800 text-white"
-              value={destination}
-              onChange={(e) => setDestination(e.target.value.toUpperCase())}
-              placeholder="e.g., BOM"
-            />
-          </div>
+        {/* Search Tab */}
+        {activeTab === "search" && (
+          <div className="max-w-2xl mx-auto">
+            <div className="bg-gray-800 p-6 rounded-lg shadow-xl">
+              <h2 className="text-2xl font-bold mb-4">Search Flights</h2>
+              
+              <div className="grid md:grid-cols-2 gap-4">
+                <AirportSearch
+                  label="Origin"
+                  value={origin}
+                  onChange={setOrigin}
+                  placeholder="e.g., Delhi, DEL, Mumbai..."
+                />
 
-          <div>
-            <label className="block mb-1">Start Date</label>
-            <input
-              type="date"
-              className="w-full p-2 rounded bg-gray-800 text-white"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-            />
-          </div>
+                <AirportSearch
+                  label="Destination"
+                  value={destination}
+                  onChange={setDestination}
+                  placeholder="e.g., Mumbai, BOM, Goa..."
+                />
 
-          <div>
-            <label className="block mb-1">End Date</label>
-            <input
-              type="date"
-              className="w-full p-2 rounded bg-gray-800 text-white"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-            />
-          </div>
-        </div>
+                <div>
+                  <label className="block mb-1 text-sm font-semibold">Start Date</label>
+                  <input
+                    type="date"
+                    className="w-full p-3 rounded bg-gray-700 text-white border border-gray-600 focus:border-blue-500 focus:outline-none"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                  />
+                </div>
 
-        {errorMsg && (
-          <p className="text-red-500 font-semibold text-center">{errorMsg}</p>
+                <div>
+                  <label className="block mb-1 text-sm font-semibold">End Date</label>
+                  <input
+                    type="date"
+                    className="w-full p-3 rounded bg-gray-700 text-white border border-gray-600 focus:border-blue-500 focus:outline-none"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {errorMsg && (
+                <p className="text-red-500 font-semibold text-center mt-4">{errorMsg}</p>
+              )}
+
+              <button
+                className="w-full bg-blue-600 hover:bg-blue-700 py-3 rounded text-white font-semibold mt-6 transition-all"
+                onClick={handleSearch}
+                disabled={loading}
+              >
+                {loading ? "🔍 Searching..." : "🔍 Find Flights"}
+              </button>
+            </div>
+
+            {/* Search Results */}
+            {results && !errorMsg && (
+              <div className="bg-gray-800 p-6 rounded-lg mt-6 shadow-xl">
+                <div className="flex justify-between items-start mb-4">
+                  <h2 className="text-2xl font-bold">Best Deals Found</h2>
+                  <button
+                    onClick={handleSaveCurrentSearch}
+                    className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded font-semibold"
+                  >
+                    ⭐ Save This Search
+                  </button>
+                </div>
+
+                <div className="grid md:grid-cols-3 gap-4 mb-6">
+                  <div className="bg-gray-700 p-4 rounded">
+                    <p className="text-sm text-gray-400">Lowest Price</p>
+                    <p className="text-2xl font-bold text-green-400">
+                      ${results.analysis.min_price}
+                    </p>
+                  </div>
+                  <div className="bg-gray-700 p-4 rounded">
+                    <p className="text-sm text-gray-400">Average Price</p>
+                    <p className="text-2xl font-bold text-blue-400">
+                      ${results.analysis.avg_price.toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="bg-gray-700 p-4 rounded">
+                    <p className="text-sm text-gray-400">Total Flights</p>
+                    <p className="text-2xl font-bold text-purple-400">
+                      {results.analysis.total_flights}
+                    </p>
+                  </div>
+                </div>
+
+                <h3 className="text-lg font-semibold mb-3">Top Flights:</h3>
+                <ul className="space-y-3 max-h-96 overflow-y-auto">
+                  {results.flights.slice(0, 10).map((flight, idx) => (
+                    <li key={idx} className="bg-gray-700 p-4 rounded hover:bg-gray-600 transition-all">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-bold text-lg">{flight.airline}</p>
+                          <p className="text-sm text-gray-400 mt-1">📅 {flight.date}</p>
+                          <p className="text-gray-300 mt-2">
+                            🛫 {flight.departure} → 🛬 {flight.arrival} | ⏱️ {flight.duration}
+                          </p>
+                        </div>
+                        <p className="text-xl font-bold text-green-400">{flight.price}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+
+                {results.flights.length > 10 && (
+                  <p className="text-center text-gray-400 mt-4 text-sm">
+                    Showing top 10 of {results.flights.length} flights
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
         )}
 
-        <button
-          className="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded text-white font-semibold"
-          onClick={handleSearch}
-          disabled={loading}
-        >
-          {loading ? "Searching..." : "Find Flights"}
-        </button>
+        {/* History Tab */}
+        {activeTab === "history" && (
+          <SearchHistory onViewDetails={handleViewDetails} />
+        )}
 
-        {results && !errorMsg && (
-          <div className="bg-gray-800 p-4 rounded mt-6">
-            <h2 className="text-xl font-bold mb-2">Best Deals</h2>
-            <p>
-              <strong>Lowest Price:</strong> ${results.analysis.min_price}
-            </p>
-            <p>
-              <strong>Average Price:</strong> ${results.analysis.avg_price.toFixed(2)}
-            </p>
-            <p>
-              <strong>Total Flights:</strong> {results.analysis.total_flights}
-            </p>
-
-            <h3 className="text-lg font-semibold mt-4">Flights:</h3>
-            <ul className="mt-2 space-y-2 max-h-96 overflow-y-auto">
-              {results.flights.map((flight, idx) => (
-                <li key={idx} className="bg-gray-700 p-3 rounded">
-                  <p>
-                    <strong>{flight.airline}</strong> - {flight.date}
-                  </p>
-                  <p>
-                    {flight.departure} → {flight.arrival} | {flight.duration} | {flight.price}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          </div>
+        {/* Saved Tab */}
+        {activeTab === "saved" && (
+          <SavedSearches onViewDetails={handleViewDetails} />
         )}
       </div>
+
+      {/* Flight Details Modal */}
+      {selectedSearchId && (
+        <FlightDetails
+          searchId={selectedSearchId}
+          onClose={() => setSelectedSearchId(null)}
+        />
+      )}
     </div>
   );
 }
