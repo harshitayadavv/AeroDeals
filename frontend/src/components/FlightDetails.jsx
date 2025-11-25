@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { fetchWithAuth } from "../utils/auth";
 
 const API_URL = "http://127.0.0.1:8000";
 
@@ -14,7 +15,8 @@ function FlightDetails({ searchId, onClose }) {
   const fetchDetails = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_URL}/search/${searchId}`);
+      setError("");
+      const response = await fetchWithAuth(`${API_URL}/search/${searchId}`);
       if (!response.ok) throw new Error("Failed to fetch details");
       const data = await response.json();
       setDetails(data);
@@ -46,12 +48,20 @@ function FlightDetails({ searchId, onClose }) {
           <div className="text-center text-red-400">
             <p className="text-4xl mb-4">❌</p>
             <p>{error}</p>
-            <button
-              onClick={onClose}
-              className="mt-4 bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded"
-            >
-              Close
-            </button>
+            <div className="flex gap-2 justify-center mt-4">
+              <button
+                onClick={fetchDetails}
+                className="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded"
+              >
+                Retry
+              </button>
+              <button
+                onClick={onClose}
+                className="bg-gray-600 hover:bg-gray-700 px-6 py-2 rounded"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       </div>

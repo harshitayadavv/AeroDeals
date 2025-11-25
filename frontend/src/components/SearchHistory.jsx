@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import SearchCard from "./SearchCard";
+import { fetchWithAuth } from "../utils/auth";
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = "http://127.0.0.1:8000";  
 
 function SearchHistory({ onViewDetails }) {
   const [history, setHistory] = useState([]);
@@ -15,7 +16,8 @@ function SearchHistory({ onViewDetails }) {
   const fetchHistory = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_URL}/history`);
+      setError("");
+      const response = await fetchWithAuth(`${API_URL}/history`);
       if (!response.ok) throw new Error("Failed to fetch history");
       const data = await response.json();
       setHistory(data.history);
@@ -29,7 +31,7 @@ function SearchHistory({ onViewDetails }) {
 
   const handleSave = async (searchId) => {
     try {
-      const response = await fetch(`${API_URL}/save/${searchId}`, {
+      const response = await fetchWithAuth(`${API_URL}/save/${searchId}`, {
         method: "POST",
       });
       if (!response.ok) throw new Error("Failed to save search");
@@ -46,7 +48,7 @@ function SearchHistory({ onViewDetails }) {
     if (!confirm("Delete this search from history?")) return;
     
     try {
-      const response = await fetch(`${API_URL}/history/${searchId}`, {
+      const response = await fetchWithAuth(`${API_URL}/history/${searchId}`, {
         method: "DELETE",
       });
       if (!response.ok) throw new Error("Failed to delete");

@@ -1,13 +1,21 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { GoogleOAuthProvider } from '@react-oauth/google';
 import Tabs from "./components/Tabs";
 import SearchHistory from "./components/SearchHistory";
 import SavedSearches from "./components/SavedSearches";
 import FlightDetails from "./components/FlightDetails";
-import AirportSearch from "./components/AirportSearch";  // ✅ ADD THIS LINE
+import AirportSearch from "./components/AirportSearch";
+import Login from "./components/Login";
+import Signup from "./components/Signup";
+import { isAuthenticated, getCurrentUser, logout, fetchWithAuth } from "./utils/auth";
 
 const API_URL = "http://127.0.0.1:8000";
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
 function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [showLogin, setShowLogin] = useState(true);
+  const [currentUser, setCurrentUser] = useState(null);
   const [activeTab, setActiveTab] = useState("search");
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
@@ -17,6 +25,38 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [selectedSearchId, setSelectedSearchId] = useState(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+
+  // Check authentication on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      if (isAuthenticated()) {
+        const user = await getCurrentUser();
+        if (user) {
+          setCurrentUser(user);
+          setIsLoggedIn(true);
+        }
+      }
+      setCheckingAuth(false);
+    };
+    checkAuth();
+  }, []);
+
+  const handleLoginSuccess = (user) => {
+    setCurrentUser(user);
+    setIsLoggedIn(true);
+  };
+
+  const handleSignupSuccess = (user) => {
+    setCurrentUser(user);
+    setIsLoggedIn(true);
+  };
+
+  const handleLogout = () => {
+    logout();
+    setIsLoggedIn(false);
+    setCurrentUser(null);
+  };
 
   const handleSearch = async () => {
     setErrorMsg("");
@@ -34,9 +74,10 @@ function App() {
 
     setLoading(true);
     try {
-      const response = await fetch(
+      const response = await fetchWithAuth(
         `${API_URL}/search?origin=${origin}&destination=${destination}&start_date=${startDate}&end_date=${endDate}`
       );
+      
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
       }
@@ -56,7 +97,7 @@ function App() {
     }
 
     try {
-      const response = await fetch(`${API_URL}/save/${results.search_id}`, {
+      const response = await fetchWithAuth(`${API_URL}/save/${results.search_id}`, {
         method: "POST",
       });
       if (!response.ok) throw new Error("Failed to save");
@@ -72,12 +113,67 @@ function App() {
     setSelectedSearchId(searchId);
   };
 
+  // Show loading while checking authentication
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin text-4xl mb-4">⏳</div>
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login/signup if not authenticated
+  if (!isLoggedIn) {
+    return (
+      <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+        {showLogin ? (
+          <Login
+            onLoginSuccess={handleLoginSuccess}
+            onSwitchToSignup={() => setShowLogin(false)}
+          />
+        ) : (
+          <Signup
+            onSignupSuccess={handleSignupSuccess}
+            onSwitchToLogin={() => setShowLogin(true)}
+          />
+        )}
+      </GoogleOAuthProvider>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
-      <h1 className="text-4xl font-bold text-center mb-2">✈️ AeroDeals</h1>
-      <p className="text-center text-gray-400 mb-8 italic">
-        Find the best flights between your chosen dates
-      </p>
+      {/* Header with User Info */}
+      <div className="max-w-6xl mx-auto mb-6">
+        <div className="flex justify-between items-center">
+          <div>
+            <h1 className="text-4xl font-bold">✈️ AeroDeals</h1>
+            <p className="text-gray-400 italic">Find the best flights between your chosen dates</p>
+          </div>
+          <div className="flex items-center gap-4">
+            {currentUser?.profile_picture && (
+              <img
+                src={currentUser.profile_picture}
+                alt="Profile"
+                className="w-10 h-10 rounded-full"
+              />
+            )}
+            <div className="text-right">
+              <p className="text-sm text-gray-400">Welcome back,</p>
+              <p className="font-semibold">{currentUser?.full_name}</p>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded font-semibold transition-all"
+            >
+              Logout
+            </button>
+          </div>
+        </div>
+      </div>
 
       <div className="max-w-6xl mx-auto">
         <Tabs activeTab={activeTab} setActiveTab={setActiveTab} />

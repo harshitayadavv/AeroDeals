@@ -8,14 +8,16 @@ AeroDeals helps you explore and compare flight prices effortlessly. Built with a
 
 ## 🚀 Features
 
+- 🔐 **User Authentication** - Secure JWT-based login/signup with Google OAuth
+- 👤 **User Profiles** - Personalized search history for each user
 - 🔎 **Smart City Search** - Search by city names or airport codes with autocomplete
 - 💰 **Price Analysis** - View lowest, average, and total flights found  
-- 📜 **Search History** - Auto-saves all searches for 7 days
+- 📜 **Search History** - Auto-saves all searches for 7 days (user-specific)
 - ⭐ **Save Searches** - Bookmark your favorite searches permanently
-- 🗄️ **MongoDB Integration** - Persistent storage for search history and saved searches
+- 🗄️ **MongoDB Integration** - Persistent storage with user isolation
 - 📊 **Detailed View** - Click to see complete flight listings
 - 🧠 **Smart Analysis** - Get insights on best deals
-- ⚙️ **Backend** - Powered by FastAPI and Selenium for scraping  
+- 🌐 **Google Login** - Quick sign-in with your Google account
 - 🌙 **Modern UI** - Dark themed responsive interface with Tailwind CSS  
 
 ---
@@ -25,46 +27,53 @@ AeroDeals helps you explore and compare flight prices effortlessly. Built with a
 | Frontend            | Backend                | Database       | Tools          |
 |---------------------|------------------------|----------------|----------------|
 | React               | FastAPI (Python)       | MongoDB Atlas  | Selenium       |
-| Tailwind CSS        | Motor (Async MongoDB)  | PyMongo        | Pandas         |
-| JavaScript (ES6+)   | Pydantic               |                | BeautifulSoup  |
+| Tailwind CSS        | Motor (Async MongoDB)  | JWT Auth       | Pandas         |
+| Google OAuth        | Pydantic               | PyMongo        | BeautifulSoup  |
 
 ---
 
 ## 📦 Project Structure
-
 ```
 AeroDeals/
 │
 ├── frontend/                     # React + Tailwind frontend
 │   ├── public/
-│   └── src/
-│       ├── components/
-│       │   ├── Tabs.jsx          # Navigation tabs
-│       │   ├── AirportSearch.jsx # Autocomplete city search
-│       │   ├── SearchCard.jsx    # Reusable search card
-│       │   ├── SearchHistory.jsx # History tab
-│       │   ├── SavedSearches.jsx # Saved searches tab
-│       │   └── FlightDetails.jsx # Flight details modal
-│       ├── data/
-│       │   └── airports.js       # Airport/city database
-│       ├── App.jsx
-│       └── main.jsx
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── Tabs.jsx          # Navigation tabs
+│   │   │   ├── AirportSearch.jsx # Autocomplete city search
+│   │   │   ├── SearchCard.jsx    # Reusable search card
+│   │   │   ├── SearchHistory.jsx # History tab
+│   │   │   ├── SavedSearches.jsx # Saved searches tab
+│   │   │   ├── FlightDetails.jsx # Flight details modal
+│   │   │   ├── Login.jsx         # Login page
+│   │   │   └── Signup.jsx        # Signup page
+│   │   ├── data/
+│   │   │   └── airports.js       # Airport/city database
+│   │   ├── utils/
+│   │   │   └── auth.js           # Authentication utilities
+│   │   ├── App.jsx
+│   │   └── main.jsx
+│   ├── .env.example              # Environment variables template
+│   └── package.json
 │
 ├── backend/                      # FastAPI + MongoDB backend
-│   ├── api.py                    # Main API routes
+│   ├── src/
+│   │   ├── api.py                # Main API routes
+│   │   ├── auth.py               # Authentication logic
+│   │   ├── database.py           # MongoDB connection
+│   │   ├── models.py             # Pydantic models
+│   │   ├── flight_scraper.py     # Flight scraping logic
+│   │   ├── data_processor.py     # Data analysis
+│   │   └── utils.py              # Helper functions
 │   ├── main.py                   # CLI entry point
-│   ├── .env                      # Environment variables (not in git)
-│   └── src/
-│       ├── database.py           # MongoDB connection
-│       ├── models.py             # Pydantic models
-│       ├── flight_scraper.py     # Flight scraping logic
-│       ├── data_processor.py     # Data analysis
-│       └── utils.py              # Helper functions
+│   ├── .env.example              # Environment variables template
+│   └── requirements.txt
 │
-├── venv/                         # Python virtual environment (not in git)
+├── venv/                         # Python virtual environment (gitignored)
 ├── .gitignore
 ├── README.md
-└── requirements.txt
+└── LICENSE
 ```
 
 ---
@@ -77,6 +86,7 @@ AeroDeals/
 - Python 3.8+
 - MongoDB Atlas account (free tier)
 - Chrome browser (for Selenium)
+- Google Cloud Console account (for OAuth)
 
 ---
 
@@ -92,8 +102,22 @@ AeroDeals/
 
 ---
 
-### 🧠 Backend Setup
+### 🔑 Google OAuth Setup
 
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project
+3. Navigate to **APIs & Services** → **OAuth consent screen**
+4. Configure consent screen and add test users
+5. Go to **Credentials** → **Create Credentials** → **OAuth 2.0 Client ID**
+6. Set application type to **Web application**
+7. Add authorized JavaScript origins:
+   - `http://localhost:5173`
+   - `http://127.0.0.1:5173`
+8. Copy the **Client ID**
+
+---
+
+### 🧠 Backend Setup
 ```bash
 # Navigate to backend directory
 cd backend
@@ -110,14 +134,16 @@ source venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Create .env file and add your MongoDB connection
-# Create a file named .env with:
-MONGODB_URI=mongodb+srv://your-username:your-password@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority
-DATABASE_NAME=aerodeals
-ENVIRONMENT=development
+# Create .env file from example
+cp .env.example .env
+
+# Edit .env and add your credentials:
+# - MongoDB connection string
+# - Secret key (generate with: openssl rand -hex 32)
+# - Google Client ID
 
 # Start FastAPI server
-uvicorn api:app --reload
+uvicorn src.api:app --reload
 ```
 
 The backend API will be available at `http://127.0.0.1:8000`
@@ -127,13 +153,17 @@ The backend API will be available at `http://127.0.0.1:8000`
 ---
 
 ### 🖥 Frontend Setup
-
 ```bash
 # Navigate to frontend directory
 cd frontend
 
 # Install dependencies
 npm install
+
+# Create .env file from example
+cp .env.example .env
+
+# Edit .env and add your Google Client ID
 
 # Start development server
 npm run dev
@@ -145,12 +175,23 @@ The frontend will be available at `http://localhost:5173`
 
 ## 🎯 API Endpoints
 
+### Authentication
+
+| Method | Endpoint              | Description                          |
+|--------|-----------------------|--------------------------------------|
+| POST   | `/auth/register`      | Register new user                    |
+| POST   | `/auth/login-json`    | Login with email/password            |
+| POST   | `/auth/google`        | Login with Google OAuth              |
+| GET    | `/auth/me`            | Get current user info                |
+
+### Flight Search
+
 | Method | Endpoint              | Description                          |
 |--------|-----------------------|--------------------------------------|
 | GET    | `/`                   | API welcome message                  |
 | GET    | `/search`             | Search flights & save to history     |
-| GET    | `/history`            | Get search history (last 7 days)     |
-| GET    | `/saved`              | Get permanently saved searches       |
+| GET    | `/history`            | Get user's search history            |
+| GET    | `/saved`              | Get user's saved searches            |
 | GET    | `/search/{id}`        | Get details of a specific search     |
 | POST   | `/save/{id}`          | Save a search permanently            |
 | DELETE | `/history/{id}`       | Delete a search from history         |
@@ -161,7 +202,6 @@ The frontend will be available at `http://localhost:5173`
 ## 🔧 Environment Variables
 
 ### Backend `.env` (Required)
-
 ```env
 # MongoDB Atlas Connection
 MONGODB_URI=mongodb+srv://username:password@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority
@@ -169,55 +209,93 @@ MONGODB_URI=mongodb+srv://username:password@cluster0.xxxxx.mongodb.net/?retryWri
 # Database Name
 DATABASE_NAME=aerodeals
 
+# JWT Configuration
+SECRET_KEY=your_secret_key_here
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=10080
+
+# Google OAuth
+GOOGLE_CLIENT_ID=your_google_client_id_here
+
 # Environment
 ENVIRONMENT=development
 ```
 
-**⚠️ Important:** Never commit `.env` file to GitHub!
+### Frontend `.env` (Required)
+```env
+# API Configuration
+VITE_API_URL=http://127.0.0.1:8000
+
+# Google OAuth
+VITE_GOOGLE_CLIENT_ID=your_google_client_id_here
+```
+
+**⚠️ Important:** 
+- Never commit `.env` files to GitHub!
+- Use `.env.example` files as templates
+- Generate a strong SECRET_KEY: `openssl rand -hex 32`
 
 ---
 
 ## 📚 How to Use
 
-1. **Search Flights**
+### 1. **Sign Up / Login**
+   - Create an account with email and password
+   - Or sign in with Google (one-click!)
+   - Your searches are private and secure
+
+### 2. **Search Flights**
    - Enter origin city (e.g., "Delhi" or "DEL")
    - Enter destination city (e.g., "Mumbai" or "BOM")
    - Select date range
    - Click "Find Flights"
 
-2. **View Results**
+### 3. **View Results**
    - See price analysis (lowest, average, total flights)
    - Browse top 10 flights
    - Click "View Details" for complete list
 
-3. **Save Searches**
+### 4. **Save Searches**
    - Click "⭐ Save This Search" to bookmark
    - View in "Saved" tab anytime
+   - Your saved searches persist forever
 
-4. **Search History**
-   - All searches auto-saved for 7 days
+### 5. **Search History**
+   - All your searches auto-saved for 7 days
    - View in "History" tab
    - Save or delete as needed
 
 ---
 
-## 🌍 Deployment (Coming Soon)
+## 🔒 Security Features
 
-Currently running on:
-- Frontend: `http://localhost:5173`
-- Backend: `http://127.0.0.1:8000`
+- ✅ JWT-based authentication
+- ✅ Password hashing with bcrypt
+- ✅ User-specific data isolation
+- ✅ Google OAuth 2.0 integration
+- ✅ Protected API endpoints
+- ✅ Automatic token refresh
+- ✅ Secure session management
 
-**Production deployment instructions will be added after authentication is implemented.**
+---
+
+## 🌍 Deployment
+
+**Coming Soon:** Production deployment guides for:
+- Frontend: Vercel / Netlify
+- Backend: Railway / Render
+- Database: MongoDB Atlas (already cloud-based)
 
 ---
 
 ## 🔮 Upcoming Features
 
-- 🔐 **User Authentication** (JWT-based login/signup)
-- 👤 **User Profiles** (Personalized search history)
-- 🔔 **Price Alerts** (Get notified when prices drop)
-- 📊 **Advanced Analytics** (Price trends, best time to book)
-- 🌐 **Real Flight Data** (Integration with live flight APIs)
+- 🔔 **Price Alerts** - Get notified when prices drop
+- 📊 **Advanced Analytics** - Price trends, best time to book
+- 🌐 **Real Flight Data** - Integration with live flight APIs
+- 📧 **Email Notifications** - Search summaries and alerts
+- 🎨 **Theme Customization** - Light/dark mode toggle
+- 📱 **Mobile App** - React Native version
 
 ---
 
@@ -249,7 +327,27 @@ This project is open source and available under the [MIT License](LICENSE).
 - Built with [FastAPI](https://fastapi.tiangolo.com/)
 - UI powered by [Tailwind CSS](https://tailwindcss.com/)
 - Database by [MongoDB Atlas](https://www.mongodb.com/cloud/atlas)
+- Authentication with [JWT](https://jwt.io/) and [Google OAuth](https://developers.google.com/identity)
+
+---
+
+## 🐛 Known Issues
+
+- Flight scraping may be slow depending on website response times
+- Some airports may not be in the autocomplete database
+- Date validation is client-side only
+
+---
+
+## 📞 Support
+
+If you encounter any issues or have questions:
+- Open an issue on GitHub
+- Check existing issues for solutions
+- Read the setup guide carefully
 
 ---
 
 **⭐ Star this repo if you find it helpful!**
+
+**Made with ❤️ by Harshita Yadav**

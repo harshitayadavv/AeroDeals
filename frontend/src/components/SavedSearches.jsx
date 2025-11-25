@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import SearchCard from "./SearchCard";
+import { fetchWithAuth } from "../utils/auth";
 
 const API_URL = "http://127.0.0.1:8000";
 
@@ -15,7 +16,8 @@ function SavedSearches({ onViewDetails }) {
   const fetchSaved = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_URL}/saved`);
+      setError("");
+      const response = await fetchWithAuth(`${API_URL}/saved`);
       if (!response.ok) throw new Error("Failed to fetch saved searches");
       const data = await response.json();
       setSaved(data.saved);
@@ -31,7 +33,7 @@ function SavedSearches({ onViewDetails }) {
     if (!confirm("Remove this search from saved?")) return;
     
     try {
-      const response = await fetch(`${API_URL}/saved/${searchId}`, {
+      const response = await fetchWithAuth(`${API_URL}/saved/${searchId}`, {
         method: "DELETE",
       });
       if (!response.ok) throw new Error("Failed to delete");
