@@ -1,7 +1,6 @@
 import os
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
-import certifi
 import logging
 
 load_dotenv()
@@ -17,28 +16,18 @@ class Database:
         try:
             mongodb_uri = os.getenv("MONGODB_URI")
             
-            # DEBUG: Print what we're getting
-            logger.info(f"📝 MONGODB_URI exists: {mongodb_uri is not None}")
-            logger.info(f"📝 MONGODB_URI length: {len(mongodb_uri) if mongodb_uri else 0}")
-            if mongodb_uri:
-                logger.info(f"📝 MONGODB_URI starts with: {mongodb_uri[:20]}...")
-                logger.info(f"📝 Has mongodb+srv: {'mongodb+srv' in mongodb_uri}")
-            else:
-                logger.error("❌ MONGODB_URI is None or empty!")
-            
             if not mongodb_uri:
                 raise ValueError("❌ MONGODB_URI not found in environment variables")
             
-            # Check if URI is valid
-            if not mongodb_uri.startswith(('mongodb://', 'mongodb+srv://')):
-                raise ValueError(f"❌ Invalid MongoDB URI format. Got: {mongodb_uri[:30]}...")
+            # Remove "MONGODB_URI=" prefix if it exists
+            if mongodb_uri.startswith("MONGODB_URI="):
+                mongodb_uri = mongodb_uri.replace("MONGODB_URI=", "", 1)
             
             logger.info("🔄 Connecting to MongoDB...")
             
-            # Clean connection
+            # Minimal connection - let Motor/PyMongo handle SSL automatically
             cls.client = AsyncIOMotorClient(
                 mongodb_uri,
-                tlsCAFile=certifi.where(),
                 serverSelectionTimeoutMS=30000,
                 connectTimeoutMS=30000,
                 socketTimeoutMS=30000
