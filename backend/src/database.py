@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 import logging
 
 load_dotenv()
-
 logger = logging.getLogger(__name__)
 
 class Database:
@@ -19,21 +18,16 @@ class Database:
             if not mongodb_uri:
                 raise ValueError("❌ MONGODB_URI not found in environment variables")
             
-            # Remove "MONGODB_URI=" prefix if it exists
+            # Remove "MONGODB_URI=" prefix if it exists (in case of .env file issue)
             if mongodb_uri.startswith("MONGODB_URI="):
                 mongodb_uri = mongodb_uri.replace("MONGODB_URI=", "", 1)
             
             logger.info("🔄 Connecting to MongoDB...")
             
-            # Minimal connection - let Motor/PyMongo handle SSL automatically
-            cls.client = AsyncIOMotorClient(
-                mongodb_uri,
-                serverSelectionTimeoutMS=30000,
-                connectTimeoutMS=30000,
-                socketTimeoutMS=30000
-            )
+            # Simple connection - let pymongo handle SSL
+            cls.client = AsyncIOMotorClient(mongodb_uri)
             
-            # Test connection
+            # Test connection with timeout
             await cls.client.admin.command('ping')
             logger.info("✅ Successfully connected to MongoDB Atlas!")
             
