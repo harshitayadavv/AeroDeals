@@ -1,8 +1,12 @@
 import os
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
+import certifi
+import logging
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 class Database:
     client: AsyncIOMotorClient = None
@@ -14,20 +18,27 @@ class Database:
             mongodb_uri = os.getenv("MONGODB_URI")
             
             if not mongodb_uri:
-                raise ValueError("MONGODB_URI not found in environment variables")
+                raise ValueError("❌ MONGODB_URI not found in environment variables")
             
-            # Simple connection - let Motor handle SSL automatically
+            logger.info("🔄 Connecting to MongoDB...")
+            
+            # Create client with proper SSL/TLS configuration
             cls.client = AsyncIOMotorClient(
                 mongodb_uri,
-                serverSelectionTimeoutMS=10000,
+                tlsCAFile=certifi.where(),  # ✅ This fixes the SSL error
+                serverSelectionTimeoutMS=30000,  # Increased timeout
+                connectTimeoutMS=30000,
+                socketTimeoutMS=30000,
+                retryWrites=True,
+                w='majority'
             )
             
             # Test connection
             await cls.client.admin.command('ping')
-            print("✅ Successfully connected to MongoDB!")
+            logger.info("✅ Successfully connected to MongoDB Atlas!")
             
         except Exception as e:
-            print(f"❌ Failed to connect to MongoDB: {e}")
+            logger.error(f"❌ Failed to connect to MongoDB: {e}")
             raise
     
     @classmethod
@@ -35,10 +46,12 @@ class Database:
         """Close MongoDB connection"""
         if cls.client:
             cls.client.close()
-            print("👋 MongoDB connection closed")
+            logger.info("👋 MongoDB connection closed")
     
     @classmethod
     def get_collection(cls, collection_name: str):
         """Get a collection from the database"""
+        if cls.client is None:
+            raise RuntimeError("Database not connected. Call connect_db() first.")
+        
         database_name = os.getenv("DATABASE_NAME", "aerodeals")
-        return cls.client[database_name][collection_name]
