@@ -3,6 +3,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 import certifi
 import logging
+import ssl
 
 load_dotenv()
 
@@ -22,15 +23,31 @@ class Database:
             
             logger.info("🔄 Connecting to MongoDB...")
             
-            # Create client with proper SSL/TLS configuration
+            # Create SSL context with proper configuration
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+            ssl_context.check_hostname = True
+            ssl_context.verify_mode = ssl.CERT_REQUIRED
+            
+            # Try to fix TLS version issues
+            try:
+                ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+            except AttributeError:
+                # Fallback for older Python versions
+                pass
+            
+            # Create client with SSL context
             cls.client = AsyncIOMotorClient(
                 mongodb_uri,
-                tlsCAFile=certifi.where(),  # ✅ This fixes the SSL error
-                serverSelectionTimeoutMS=30000,  # Increased timeout
+                tls=True,
+                tlsCAFile=certifi.where(),
+                tlsAllowInvalidCertificates=False,
+                serverSelectionTimeoutMS=30000,
                 connectTimeoutMS=30000,
                 socketTimeoutMS=30000,
                 retryWrites=True,
-                w='majority'
+                w='majority',
+                ssl_cert_reqs=ssl.CERT_REQUIRED,
+                ssl_ca_certs=certifi.where()
             )
             
             # Test connection
@@ -55,3 +72,4 @@ class Database:
             raise RuntimeError("Database not connected. Call connect_db() first.")
         
         database_name = os.getenv("DATABASE_NAME", "aerodeals")
+        return cls.client[database_name][collection_name]
