@@ -18,16 +18,16 @@ class Database:
             if not mongodb_uri:
                 raise ValueError("❌ MONGODB_URI not found in environment variables")
             
-            # Remove "MONGODB_URI=" prefix if it exists (in case of .env file issue)
+            # Remove prefix if exists
             if mongodb_uri.startswith("MONGODB_URI="):
                 mongodb_uri = mongodb_uri.replace("MONGODB_URI=", "", 1)
             
             logger.info("🔄 Connecting to MongoDB...")
             
-            # Simple connection - let pymongo handle SSL
+            # Simple connection
             cls.client = AsyncIOMotorClient(mongodb_uri)
             
-            # Test connection with timeout
+            # Test connection
             await cls.client.admin.command('ping')
             logger.info("✅ Successfully connected to MongoDB Atlas!")
             
