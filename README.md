@@ -18,17 +18,18 @@ AeroDeals helps you explore and compare flight prices effortlessly. Built with a
 - 📊 **Detailed View** - Click to see complete flight listings
 - 🧠 **Smart Analysis** - Get insights on best deals
 - 🌐 **Google Login** - Quick sign-in with your Google account
-- 🌙 **Modern UI** - Dark themed responsive interface with Tailwind CSS  
+- 🌙 **Modern UI** - Dark themed responsive interface with Tailwind CSS
+- 🐳 **Docker Support** - Containerized deployment ready
 
 ---
 
 ## 🛠 Tech Stack
 
-| Frontend            | Backend                | Database       | Tools          |
-|---------------------|------------------------|----------------|----------------|
-| React               | FastAPI (Python)       | MongoDB Atlas  | Selenium       |
-| Tailwind CSS        | Motor (Async MongoDB)  | JWT Auth       | Pandas         |
-| Google OAuth        | Pydantic               | PyMongo        | BeautifulSoup  |
+| Frontend            | Backend                | Database       | Tools          | DevOps    |
+|---------------------|------------------------|----------------|----------------|-----------|
+| React               | FastAPI (Python)       | MongoDB Atlas  | Selenium       | Docker    |
+| Tailwind CSS        | Motor (Async MongoDB)  | JWT Auth       | Pandas         |           |
+| Google OAuth        | Pydantic               | PyMongo        | BeautifulSoup  |           |
 
 ---
 
@@ -70,6 +71,9 @@ AeroDeals/
 │   ├── .env.example              # Environment variables template
 │   └── requirements.txt
 │
+├── Dockerfile                    # Docker configuration for backend
+├── .dockerignore                 # Docker ignore rules
+├── docker-compose.yml            # Docker Compose setup (optional)
 ├── venv/                         # Python virtual environment (gitignored)
 ├── .gitignore
 ├── README.md
@@ -78,7 +82,7 @@ AeroDeals/
 
 ---
 
-## ⚙️ Getting Started Locally
+## ⚙️ Getting Started
 
 ### Prerequisites
 
@@ -87,6 +91,7 @@ AeroDeals/
 - MongoDB Atlas account (free tier)
 - Chrome browser (for Selenium)
 - Google Cloud Console account (for OAuth)
+- **Docker & Docker Compose** (optional, for containerized deployment)
 
 ---
 
@@ -117,7 +122,53 @@ AeroDeals/
 
 ---
 
-### 🧠 Backend Setup
+## 🚀 Quick Start (Choose Your Method)
+
+### Method 1: 🐳 Using Docker (Recommended)
+
+**Prerequisites:** Docker and Docker Compose installed
+```bash
+# 1. Clone the repository
+git clone https://github.com/harshitayadavv/AeroDeals.git
+cd AeroDeals
+
+# 2. Create .env file
+# Copy backend/.env.example to project root and rename to .env
+# Edit .env with your MongoDB URI, Secret Key, and Google Client ID
+
+# 3. Build and run with Docker Compose
+docker-compose up -d
+
+# 4. Access the application
+# Backend API: http://localhost:10000
+
+# View logs
+docker-compose logs -f
+
+# Stop containers
+docker-compose down
+```
+
+**Or build manually:**
+```bash
+# Build Docker image
+docker build -t aerodeals-api .
+
+# Run container
+docker run -d \
+  -p 10000:10000 \
+  -e MONGODB_URI="your-mongodb-uri" \
+  -e SECRET_KEY="your-secret-key" \
+  -e GOOGLE_CLIENT_ID="your-google-client-id" \
+  --name aerodeals-api \
+  aerodeals-api
+```
+
+---
+
+### Method 2: 💻 Local Development (Traditional)
+
+#### 🧠 Backend Setup
 ```bash
 # Navigate to backend directory
 cd backend
@@ -143,16 +194,16 @@ cp .env.example .env
 # - Google Client ID
 
 # Start FastAPI server
-uvicorn src.api:app --reload
+uvicorn src.api:app --reload --host 0.0.0.0 --port 10000
 ```
 
-The backend API will be available at `http://127.0.0.1:8000`
+The backend API will be available at `http://127.0.0.1:10000`
 
-**✅ Verify Backend:** Visit `http://127.0.0.1:8000` - you should see a welcome message!
+**✅ Verify Backend:** Visit `http://127.0.0.1:10000` - you should see a welcome message!
 
 ---
 
-### 🖥 Frontend Setup
+#### 🖥 Frontend Setup
 ```bash
 # Navigate to frontend directory
 cd frontend
@@ -170,6 +221,32 @@ npm run dev
 ```
 
 The frontend will be available at `http://localhost:5173`
+
+---
+
+## 🐳 Docker Commands Reference
+```bash
+# Build image
+docker build -t aerodeals-api .
+
+# Run container
+docker run -d -p 10000:10000 --name aerodeals-api aerodeals-api
+
+# View logs
+docker logs -f aerodeals-api
+
+# Stop container
+docker stop aerodeals-api
+
+# Remove container
+docker rm aerodeals-api
+
+# Using Docker Compose
+docker-compose up -d        # Start in background
+docker-compose logs -f      # View logs
+docker-compose down         # Stop and remove
+docker-compose restart      # Restart services
+```
 
 ---
 
@@ -224,7 +301,7 @@ ENVIRONMENT=development
 ### Frontend `.env` (Required)
 ```env
 # API Configuration
-VITE_API_URL=http://127.0.0.1:8000
+VITE_API_URL=http://127.0.0.1:10000
 
 # Google OAuth
 VITE_GOOGLE_CLIENT_ID=your_google_client_id_here
@@ -276,6 +353,7 @@ VITE_GOOGLE_CLIENT_ID=your_google_client_id_here
 - ✅ Protected API endpoints
 - ✅ Automatic token refresh
 - ✅ Secure session management
+- ✅ Containerized deployment with Docker
 
 ---
 
@@ -283,7 +361,7 @@ VITE_GOOGLE_CLIENT_ID=your_google_client_id_here
 
 **Coming Soon:** Production deployment guides for:
 - Frontend: Vercel / Netlify
-- Backend: Railway / Render
+- Backend: AWS / Cloud platforms
 - Database: MongoDB Atlas (already cloud-based)
 
 ---
@@ -328,6 +406,7 @@ This project is open source and available under the [MIT License](LICENSE).
 - UI powered by [Tailwind CSS](https://tailwindcss.com/)
 - Database by [MongoDB Atlas](https://www.mongodb.com/cloud/atlas)
 - Authentication with [JWT](https://jwt.io/) and [Google OAuth](https://developers.google.com/identity)
+- Containerized with [Docker](https://www.docker.com/)
 
 ---
 
