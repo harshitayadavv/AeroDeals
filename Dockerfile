@@ -8,15 +8,20 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first (for better caching)
-COPY backend/requirements.txt .
+# Copy only backend requirements first
+COPY backend/requirements.txt ./requirements.txt
+
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy entire backend folder
+# Copy only backend folder
 COPY backend/ ./backend/
+
+# Set working directory to backend
+WORKDIR /app/backend
 
 # Expose port
 EXPOSE 10000
 
-# Run the application
-CMD ["uvicorn", "backend.api:app", "--host", "0.0.0.0", "--port", "10000"]
+# Run the application from backend folder
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "10000"]
