@@ -1,3 +1,7 @@
+# Frontend (don't include in Docker image)
+frontend/
+node_modules/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -14,57 +18,33 @@ venv/
 env/
 .venv/
 ENV/
-env.bak/
-venv.bak/
 
 # IDEs
 .vscode/
 .idea/
 *.swp
-*.swo
-*~
 
 # OS
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
 Thumbs.db
 
 # Git
 .git
 .gitignore
-.gitattributes
 
 # Environment files
 .env
 .env.local
-.env.*.local
 
 # Logs
 *.log
 logs/
 
-# Node (if you have frontend)
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-frontend/node_modules/
-frontend/build/
-frontend/dist/
-
-# Test coverage
-.coverage
-htmlcov/
-.pytest_cache/
-
 # Documentation
 README.md
 docs/
-
-# Other
 *.md
-.dockerignore
+
+# Docker itself
 Dockerfile
+.dockerignore
