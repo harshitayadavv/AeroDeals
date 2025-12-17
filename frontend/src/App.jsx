@@ -1,10 +1,13 @@
 import { useState, useEffect } from "react";
 import { GoogleOAuthProvider } from '@react-oauth/google';
+import Navbar from "./components/Navbar";
 import Tabs from "./components/Tabs";
 import SearchHistory from "./components/SearchHistory";
 import SavedSearches from "./components/SavedSearches";
 import FlightDetails from "./components/FlightDetails";
 import AirportSearch from "./components/AirportSearch";
+import GameZone from "./components/GameZone";
+import Profile from "./components/Profile";
 import Login from "./components/Login";
 import Signup from "./components/Signup";
 import { isAuthenticated, getCurrentUser, logout, fetchWithAuth } from "./utils/auth";
@@ -16,7 +19,13 @@ function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [showLogin, setShowLogin] = useState(true);
   const [currentUser, setCurrentUser] = useState(null);
-  const [activeTab, setActiveTab] = useState("search");
+  
+  // Main navigation state
+  const [activeSection, setActiveSection] = useState("home");
+  const [activeTab, setActiveTab] = useState("search"); // For home tabs
+  const [gameType, setGameType] = useState(null); // null, 'gesture', or 'voice'
+  
+  // Flight search states
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -41,6 +50,19 @@ function App() {
     };
     checkAuth();
   }, []);
+
+  // Handle section navigation
+  useEffect(() => {
+    if (activeSection === 'gamezone-gesture') {
+      setGameType('gesture');
+      setActiveSection('gamezone');
+    } else if (activeSection === 'gamezone-voice') {
+      setGameType('voice');
+      setActiveSection('gamezone');
+    } else if (activeSection !== 'gamezone') {
+      setGameType(null);
+    }
+  }, [activeSection]);
 
   const handleLoginSuccess = (user) => {
     setCurrentUser(user);
@@ -145,164 +167,158 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-6">
-      {/* Header with User Info */}
-      <div className="max-w-6xl mx-auto mb-6">
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-4xl font-bold">✈️ AeroDeals</h1>
-            <p className="text-gray-400 italic">Find the best flights between your chosen dates</p>
-          </div>
-          <div className="flex items-center gap-4">
-            {currentUser?.profile_picture && (
-              <img
-                src={currentUser.profile_picture}
-                alt="Profile"
-                className="w-10 h-10 rounded-full"
-              />
-            )}
-            <div className="text-right">
-              <p className="text-sm text-gray-400">Welcome back,</p>
-              <p className="font-semibold">{currentUser?.full_name}</p>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded font-semibold transition-all"
-            >
-              Logout
-            </button>
-          </div>
-        </div>
-      </div>
+    <div className="min-h-screen bg-gray-900 text-white">
+      {/* New Navbar */}
+      <Navbar
+        activeSection={activeSection}
+        setActiveSection={setActiveSection}
+        currentUser={currentUser}
+        onLogout={handleLogout}
+      />
 
-      <div className="max-w-6xl mx-auto">
-        <Tabs activeTab={activeTab} setActiveTab={setActiveTab} />
+      <div className="p-6">
+        {/* HOME SECTION - Flight Search */}
+        {activeSection === "home" && (
+          <div className="max-w-6xl mx-auto">
+            <Tabs activeTab={activeTab} setActiveTab={setActiveTab} />
 
-        {/* Search Tab */}
-        {activeTab === "search" && (
-          <div className="max-w-2xl mx-auto">
-            <div className="bg-gray-800 p-6 rounded-lg shadow-xl">
-              <h2 className="text-2xl font-bold mb-4">Search Flights</h2>
-              
-              <div className="grid md:grid-cols-2 gap-4">
-                <AirportSearch
-                  label="Origin"
-                  value={origin}
-                  onChange={setOrigin}
-                  placeholder="e.g., Delhi, DEL, Mumbai..."
-                />
+            {/* Search Tab */}
+            {activeTab === "search" && (
+              <div className="max-w-2xl mx-auto">
+                <div className="bg-gray-800 p-6 rounded-lg shadow-xl">
+                  <h2 className="text-2xl font-bold mb-4">Search Flights</h2>
+                  
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <AirportSearch
+                      label="Origin"
+                      value={origin}
+                      onChange={setOrigin}
+                      placeholder="e.g., Delhi, DEL, Mumbai..."
+                    />
 
-                <AirportSearch
-                  label="Destination"
-                  value={destination}
-                  onChange={setDestination}
-                  placeholder="e.g., Mumbai, BOM, Goa..."
-                />
+                    <AirportSearch
+                      label="Destination"
+                      value={destination}
+                      onChange={setDestination}
+                      placeholder="e.g., Mumbai, BOM, Goa..."
+                    />
 
-                <div>
-                  <label className="block mb-1 text-sm font-semibold">Start Date</label>
-                  <input
-                    type="date"
-                    className="w-full p-3 rounded bg-gray-700 text-white border border-gray-600 focus:border-blue-500 focus:outline-none"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                  />
-                </div>
+                    <div>
+                      <label className="block mb-1 text-sm font-semibold">Start Date</label>
+                      <input
+                        type="date"
+                        className="w-full p-3 rounded bg-gray-700 text-white border border-gray-600 focus:border-blue-500 focus:outline-none"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                      />
+                    </div>
 
-                <div>
-                  <label className="block mb-1 text-sm font-semibold">End Date</label>
-                  <input
-                    type="date"
-                    className="w-full p-3 rounded bg-gray-700 text-white border border-gray-600 focus:border-blue-500 focus:outline-none"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                  />
-                </div>
-              </div>
+                    <div>
+                      <label className="block mb-1 text-sm font-semibold">End Date</label>
+                      <input
+                        type="date"
+                        className="w-full p-3 rounded bg-gray-700 text-white border border-gray-600 focus:border-blue-500 focus:outline-none"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
 
-              {errorMsg && (
-                <p className="text-red-500 font-semibold text-center mt-4">{errorMsg}</p>
-              )}
+                  {errorMsg && (
+                    <p className="text-red-500 font-semibold text-center mt-4">{errorMsg}</p>
+                  )}
 
-              <button
-                className="w-full bg-blue-600 hover:bg-blue-700 py-3 rounded text-white font-semibold mt-6 transition-all"
-                onClick={handleSearch}
-                disabled={loading}
-              >
-                {loading ? "🔍 Searching..." : "🔍 Find Flights"}
-              </button>
-            </div>
-
-            {/* Search Results */}
-            {results && !errorMsg && (
-              <div className="bg-gray-800 p-6 rounded-lg mt-6 shadow-xl">
-                <div className="flex justify-between items-start mb-4">
-                  <h2 className="text-2xl font-bold">Best Deals Found</h2>
                   <button
-                    onClick={handleSaveCurrentSearch}
-                    className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded font-semibold"
+                    className="w-full bg-blue-600 hover:bg-blue-700 py-3 rounded text-white font-semibold mt-6 transition-all"
+                    onClick={handleSearch}
+                    disabled={loading}
                   >
-                    ⭐ Save This Search
+                    {loading ? "🔍 Searching..." : "🔍 Find Flights"}
                   </button>
                 </div>
 
-                <div className="grid md:grid-cols-3 gap-4 mb-6">
-                  <div className="bg-gray-700 p-4 rounded">
-                    <p className="text-sm text-gray-400">Lowest Price</p>
-                    <p className="text-2xl font-bold text-green-400">
-                      ${results.analysis.min_price}
-                    </p>
-                  </div>
-                  <div className="bg-gray-700 p-4 rounded">
-                    <p className="text-sm text-gray-400">Average Price</p>
-                    <p className="text-2xl font-bold text-blue-400">
-                      ${results.analysis.avg_price.toFixed(2)}
-                    </p>
-                  </div>
-                  <div className="bg-gray-700 p-4 rounded">
-                    <p className="text-sm text-gray-400">Total Flights</p>
-                    <p className="text-2xl font-bold text-purple-400">
-                      {results.analysis.total_flights}
-                    </p>
-                  </div>
-                </div>
+                {/* Search Results */}
+                {results && !errorMsg && (
+                  <div className="bg-gray-800 p-6 rounded-lg mt-6 shadow-xl">
+                    <div className="flex justify-between items-start mb-4">
+                      <h2 className="text-2xl font-bold">Best Deals Found</h2>
+                      <button
+                        onClick={handleSaveCurrentSearch}
+                        className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded font-semibold"
+                      >
+                        ⭐ Save This Search
+                      </button>
+                    </div>
 
-                <h3 className="text-lg font-semibold mb-3">Top Flights:</h3>
-                <ul className="space-y-3 max-h-96 overflow-y-auto">
-                  {results.flights.slice(0, 10).map((flight, idx) => (
-                    <li key={idx} className="bg-gray-700 p-4 rounded hover:bg-gray-600 transition-all">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <p className="font-bold text-lg">{flight.airline}</p>
-                          <p className="text-sm text-gray-400 mt-1">📅 {flight.date}</p>
-                          <p className="text-gray-300 mt-2">
-                            🛫 {flight.departure} → 🛬 {flight.arrival} | ⏱️ {flight.duration}
-                          </p>
-                        </div>
-                        <p className="text-xl font-bold text-green-400">{flight.price}</p>
+                    <div className="grid md:grid-cols-3 gap-4 mb-6">
+                      <div className="bg-gray-700 p-4 rounded">
+                        <p className="text-sm text-gray-400">Lowest Price</p>
+                        <p className="text-2xl font-bold text-green-400">
+                          ${results.analysis.min_price}
+                        </p>
                       </div>
-                    </li>
-                  ))}
-                </ul>
+                      <div className="bg-gray-700 p-4 rounded">
+                        <p className="text-sm text-gray-400">Average Price</p>
+                        <p className="text-2xl font-bold text-blue-400">
+                          ${results.analysis.avg_price.toFixed(2)}
+                        </p>
+                      </div>
+                      <div className="bg-gray-700 p-4 rounded">
+                        <p className="text-sm text-gray-400">Total Flights</p>
+                        <p className="text-2xl font-bold text-purple-400">
+                          {results.analysis.total_flights}
+                        </p>
+                      </div>
+                    </div>
 
-                {results.flights.length > 10 && (
-                  <p className="text-center text-gray-400 mt-4 text-sm">
-                    Showing top 10 of {results.flights.length} flights
-                  </p>
+                    <h3 className="text-lg font-semibold mb-3">Top Flights:</h3>
+                    <ul className="space-y-3 max-h-96 overflow-y-auto">
+                      {results.flights.slice(0, 10).map((flight, idx) => (
+                        <li key={idx} className="bg-gray-700 p-4 rounded hover:bg-gray-600 transition-all">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="font-bold text-lg">{flight.airline}</p>
+                              <p className="text-sm text-gray-400 mt-1">📅 {flight.date}</p>
+                              <p className="text-gray-300 mt-2">
+                                🛫 {flight.departure} → 🛬 {flight.arrival} | ⏱️ {flight.duration}
+                              </p>
+                            </div>
+                            <p className="text-xl font-bold text-green-400">{flight.price}</p>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+
+                    {results.flights.length > 10 && (
+                      <p className="text-center text-gray-400 mt-4 text-sm">
+                        Showing top 10 of {results.flights.length} flights
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
+            )}
+
+            {/* History Tab */}
+            {activeTab === "history" && (
+              <SearchHistory onViewDetails={handleViewDetails} />
+            )}
+
+            {/* Saved Tab */}
+            {activeTab === "saved" && (
+              <SavedSearches onViewDetails={handleViewDetails} />
             )}
           </div>
         )}
 
-        {/* History Tab */}
-        {activeTab === "history" && (
-          <SearchHistory onViewDetails={handleViewDetails} />
+        {/* GAME ZONE SECTION */}
+        {activeSection === "gamezone" && (
+          <GameZone gameType={gameType} onSelectGameType={setGameType} />
         )}
 
-        {/* Saved Tab */}
-        {activeTab === "saved" && (
-          <SavedSearches onViewDetails={handleViewDetails} />
+        {/* PROFILE SECTION */}
+        {activeSection === "profile" && (
+          <Profile currentUser={currentUser} />
         )}
       </div>
 
