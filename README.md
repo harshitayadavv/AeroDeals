@@ -2,7 +2,7 @@
 
 **Find the best flight deals and play interactive AI-powered games!**
 
-AeroDeals is a full-stack application that combines flight search functionality with innovative voice-controlled games. Built with React, FastAPI, MongoDB, and Web Speech API technologies.
+AeroDeals is a full-stack application that combines flight search functionality with innovative voice and gesture-controlled games. Built with React, FastAPI, MongoDB, Web Speech API, and MediaPipe technologies.
 
 ---
 
@@ -19,34 +19,61 @@ AeroDeals is a full-stack application that combines flight search functionality 
 - **📊 Detailed View** - Click to see complete flight listings
 - **🧠 Smart Analysis** - Get insights on best deals
 
-### 🎮 Game Zone (NEW!)
-- **🎤 Voice Controlled Game** - Play "Sky Racer" using voice commands
-  - Real-time speech recognition via Web Speech API
-  - Instant response to voice commands ("up", "down", "left", "right")
-  - Navigate an airplane through obstacles with your voice
-  - Score tracking and high score persistence
-  - Progressive difficulty with speed multipliers
-- **🏆 Achievements System**
-  - High score tracking per user
-  - Game statistics (total games played, average score)
-  - Personal records and milestones
+### 🎮 Game Zone - Sky Racer
+
+#### 🎤 Voice Controlled Mode
+- **Real-time Speech Recognition** via Web Speech API
+- **Instant Response** to voice commands ("up", "down", "left", "right")
+- **Navigate an airplane** through obstacles with your voice
+- **Progressive Difficulty** with speed multipliers
+- **Score Tracking** and high score persistence per user
+
+#### ✋ Gesture Controlled Mode
+- **Hand Gesture Recognition** via MediaPipe and OpenCV
+- **Zone-Based Controls** - Move hand to different screen areas
+  - **TOP zone** → Airplane moves UP
+  - **BOTTOM zone** → Airplane moves DOWN
+  - **LEFT zone** → Airplane moves LEFT
+  - **RIGHT zone** → Airplane moves RIGHT
+- **No Finger Counting** - Simple and intuitive
+- **Real-time Video Feed** - See your hand with landmarks
+- **Visual Guidance** - Screen zones marked for easy control
+- **Auto Camera Shutdown** - Privacy-friendly
+- **Same Game Mechanics** - Birds, clouds, thunder, UFOs
+
+### 🏆 Achievements & Statistics System
+- **Dual Game Modes** - Voice and Gesture separate stats
+- **High Score Tracking** - Per game mode
+- **Badge System** - 8 unique achievements:
+  - 🎮 Sky Racer - Play any game
+  - 🎤 Voice Master - Win 5 voice games
+  - ✋ Gesture Pro - Win 5 gesture games
+  - 🏆 High Scorer - Reach 100 points
+  - ⭐ Pro Pilot - Reach 500 points
+  - 👑 Voice Legend - 1000 points in voice mode
+  - 💎 Gesture Legend - 1000 points in gesture mode
+  - ✈️ First Flight - Complete first search
+- **Game Statistics** - Total games, average score, last played
+- **Progress Tracking** - Visual progress bars to legend status
 
 ### 👤 User Profile & Statistics
-- **🏅 Game Stats Dashboard**
+- **🏅 Comprehensive Stats Dashboard**
+  - Separate stats for voice and gesture modes
   - High scores per game type
   - Total games played
   - Average score tracking
   - Last played timestamps
+  - Overall progress metrics
 - **✈️ Flight Search Activity**
   - Total searches count
   - Saved searches tracker
   - Search history management
+- **🔄 Auto-Refresh** - Stats update every 5 seconds
 
 ### 🌐 General Features
 - **🌙 Modern UI** - Dark themed responsive interface with Tailwind CSS
 - **📱 Responsive Design** - Works on desktop, tablet, and mobile
 - **🔒 Security** - JWT authentication, password hashing, user isolation
-- **🐳 Docker Support** - Containerized deployment ready
 
 ---
 
@@ -55,11 +82,11 @@ AeroDeals is a full-stack application that combines flight search functionality 
 | Category | Technologies |
 |----------|-------------|
 | **Frontend** | React, Tailwind CSS, Web Speech API, Canvas API |
-| **Backend** | FastAPI (Python), Motor (Async MongoDB) |
+| **Backend** | FastAPI (Python), Motor (Async MongoDB), WebSockets |
+| **Computer Vision** | MediaPipe, OpenCV, NumPy |
 | **Database** | MongoDB Atlas, JWT Auth, PyMongo |
-| **Games** | Web Speech API (Voice Recognition), HTML5 Canvas |
+| **Games** | Web Speech API, MediaPipe Hand Tracking, HTML5 Canvas |
 | **Tools** | Selenium, Pandas, BeautifulSoup |
-| **DevOps** | Docker, Docker Compose |
 
 ---
 
@@ -80,7 +107,8 @@ AeroDeals/
 │   │   │   ├── SavedSearches.jsx # Saved searches tab
 │   │   │   ├── FlightDetails.jsx # Flight details modal
 │   │   │   ├── GameZone.jsx      # Game selection screen
-│   │   │   ├── VoiceGame.jsx     # Voice controlled Sky Racer game
+│   │   │   ├── VoiceGame.jsx     # Voice controlled game
+│   │   │   ├── GestureGame.jsx   # Gesture controlled game
 │   │   │   ├── Profile.jsx       # User profile with stats
 │   │   │   ├── Login.jsx         # Login page
 │   │   │   └── Signup.jsx        # Signup page
@@ -95,20 +123,22 @@ AeroDeals/
 │
 ├── backend/                      # FastAPI + MongoDB backend
 │   ├── src/
-│   │   ├── api.py                # Main API routes (includes game endpoints)
-│   │   ├── auth.py               # Authentication logic (Google OAuth)
+│   │   ├── api.py                # Main API routes
+│   │   ├── auth.py               # Authentication logic
 │   │   ├── database.py           # MongoDB connection
 │   │   ├── models.py             # Pydantic models
 │   │   ├── flight_scraper.py     # Flight scraping logic
 │   │   ├── data_processor.py     # Data analysis
 │   │   └── utils.py              # Helper functions
+│   ├── games/
+│   │   ├── voice_game.py         # Voice game engine
+│   │   ├── gesture_game.py       # Gesture game engine
+│   │   ├── voice_websocket.py    # Voice WebSocket handler
+│   │   └── gesture_websocket.py  # Gesture WebSocket handler
 │   ├── main.py                   # CLI entry point
 │   ├── .env.example              # Environment variables template
 │   └── requirements.txt
 │
-├── Dockerfile                    # Docker configuration for backend
-├── .dockerignore                 # Docker ignore rules
-├── docker-compose.yml            # Docker Compose setup
 ├── .gitignore
 ├── README.md
 └── LICENSE
@@ -122,11 +152,14 @@ AeroDeals/
 - **Node.js** (v16 or higher)
 - **Python** 3.8+
 - **MongoDB Atlas** account (free tier)
-- **Chrome browser** (for Selenium and Web Speech API)
+- **Chrome browser** (for Selenium, Web Speech API, and best MediaPipe support)
+- **Webcam** (for gesture control)
+- **Microphone** (for voice control)
 - **Google Cloud Console** account (for OAuth)
-- **Docker & Docker Compose** (optional)
 
-> **Note:** Voice recognition requires a modern browser (Chrome, Edge, or Safari) with microphone permissions.
+> **Note:** 
+> - Voice recognition requires Chrome/Edge/Safari with microphone permissions
+> - Gesture control requires webcam access and good lighting
 
 ---
 
@@ -139,12 +172,7 @@ AeroDeals/
    - Go to **Security** → **Network Access**
    - Click **"+ ADD IP ADDRESS"**
    - Choose **"ALLOW ACCESS FROM ANYWHERE"** (for development)
-   - Or click **"ADD CURRENT IP ADDRESS"**
-5. Get your connection string:
-   - Click **Connect** → **Drivers** → **Python**
-   - Copy the connection string
-
-> **⚠️ Important:** If you get SSL handshake errors, your IP address needs to be whitelisted in MongoDB Atlas Network Access settings.
+5. Get your connection string
 
 ---
 
@@ -152,50 +180,27 @@ AeroDeals/
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a new project
-3. Navigate to **APIs & Services** → **OAuth consent screen**
-4. Configure consent screen and add test users
-5. Go to **Credentials** → **Create Credentials** → **OAuth 2.0 Client ID**
-6. Set application type to **Web application**
-7. Add authorized JavaScript origins:
+3. Configure OAuth consent screen
+4. Create OAuth 2.0 Client ID (Web application)
+5. Add authorized JavaScript origins:
    - `http://localhost:5173`
-   - `http://127.0.0.1:5173`
-8. Copy the **Client ID**
+6. Copy the **Client ID**
 
 ---
 
-### 🚀 Quick Start
+### 🚀 Installation & Setup
 
-#### Method 1: 🐳 Using Docker (Recommended)
+#### Step 1: Clone Repository
 
 ```bash
-# 1. Clone the repository
 git clone https://github.com/harshitayadavv/AeroDeals.git
 cd AeroDeals
-
-# 2. Create .env file in project root
-cp backend/.env.example .env
-# Edit .env with your MongoDB URI, Secret Key, and Google Client ID
-
-# 3. Build and run with Docker Compose
-docker-compose up -d
-
-# 4. Access the application
-# Frontend: http://localhost:5173
-# Backend API: http://localhost:8000
-
-# View logs
-docker-compose logs -f
-
-# Stop containers
-docker-compose down
 ```
 
-#### Method 2: 💻 Local Development
-
-**Backend Setup:**
+#### Step 2: Backend Setup
 
 ```bash
-# Navigate to backend directory
+# Navigate to backend
 cd backend
 
 # Create virtual environment
@@ -204,7 +209,7 @@ python -m venv venv
 # Activate virtual environment
 # Windows:
 venv\Scripts\activate
-# macOS/Linux:
+# Mac/Linux:
 source venv/bin/activate
 
 # Install dependencies
@@ -212,16 +217,35 @@ pip install -r requirements.txt
 
 # Create .env file
 cp .env.example .env
-# Edit .env with your credentials
+# Edit .env with your credentials (see below)
+```
 
-# Start FastAPI server
+**Backend `.env` Configuration:**
+
+```env
+MONGODB_URI=mongodb+srv://username:password@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority
+DATABASE_NAME=aerodeals
+SECRET_KEY=your_secret_key_here  # Generate with: openssl rand -hex 32
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=10080
+GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
+ENVIRONMENT=development
+```
+
+**Start Backend Server:**
+
+```bash
 uvicorn src.api:app --reload --host 0.0.0.0 --port 8000
 ```
 
-**Frontend Setup:**
+Backend will run at: `http://localhost:8000`
+
+#### Step 3: Frontend Setup
+
+Open a **new terminal** window:
 
 ```bash
-# Navigate to frontend directory
+# Navigate to frontend
 cd frontend
 
 # Install dependencies
@@ -229,140 +253,124 @@ npm install
 
 # Create .env file
 cp .env.example .env
-# Edit .env with your Google Client ID
+# Edit .env with your credentials (see below)
+```
 
-# Start development server
+**Frontend `.env` Configuration:**
+
+```env
+VITE_API_URL=http://127.0.0.1:8000
+VITE_GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
+```
+
+**Start Frontend Development Server:**
+
+```bash
 npm run dev
 ```
 
----
-
-## 🔧 Environment Variables
-
-### Backend `.env` (Required)
-
-```env
-# MongoDB Atlas Connection
-MONGODB_URI=mongodb+srv://username:password@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority
-
-# Database Name
-DATABASE_NAME=aerodeals
-
-# JWT Configuration
-SECRET_KEY=your_secret_key_here  # Generate: openssl rand -hex 32
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=10080
-
-# Google OAuth
-GOOGLE_CLIENT_ID=your_google_client_id_here.apps.googleusercontent.com
-
-# Environment
-ENVIRONMENT=development
-```
-
-### Frontend `.env` (Required)
-
-```env
-# API Configuration
-VITE_API_URL=http://127.0.0.1:8000
-
-# Google OAuth
-VITE_GOOGLE_CLIENT_ID=your_google_client_id_here.apps.googleusercontent.com
-```
-
-> **⚠️ Important:**
-> - Never commit `.env` files to GitHub
-> - Generate a strong `SECRET_KEY`: `openssl rand -hex 32`
-> - Both frontend and backend must use the **same** Google Client ID
+Frontend will run at: `http://localhost:5173`
 
 ---
 
 ## 🎯 API Endpoints
 
 ### Authentication
-
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/auth/register` | Register new user |
-| POST | `/auth/login-json` | Login with email/password |
-| POST | `/auth/google` | Login with Google OAuth |
-| GET | `/auth/me` | Get current user info |
+| POST | `/auth/login-json` | Login with credentials |
+| POST | `/auth/google` | Google OAuth login |
+| GET | `/auth/me` | Get current user |
 
 ### Flight Search
-
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/` | API welcome message |
-| GET | `/search` | Search flights & save to history |
-| GET | `/history` | Get user's search history |
-| GET | `/saved` | Get user's saved searches |
-| GET | `/search/{id}` | Get details of a specific search |
-| POST | `/save/{id}` | Save a search permanently |
-| DELETE | `/history/{id}` | Delete a search from history |
-| DELETE | `/saved/{id}` | Remove a saved search |
+| GET | `/search` | Search & save to history |
+| GET | `/history` | Get search history |
+| GET | `/saved` | Get saved searches |
+| POST | `/save/{id}` | Save search permanently |
+| DELETE | `/history/{id}` | Delete from history |
 
-### Games (NEW!)
-
+### Games
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/games/score` | Submit game score and update high score |
-| GET | `/games/stats` | Get user's game statistics |
-| GET | `/games/leaderboard` | Get top players leaderboard |
+| POST | `/games/score` | Submit score (voice/gesture) |
+| GET | `/games/stats` | Get user game statistics |
+| GET | `/games/leaderboard` | Get top players |
+| POST | `/games/voice/session` | Create voice game session |
+| POST | `/games/gesture/session` | Create gesture game session |
+| WS | `/ws/voice/{session_id}` | Voice game WebSocket |
+| WS | `/ws/gesture/{session_id}` | Gesture game WebSocket |
 
 ---
 
 ## 📚 How to Use
 
 ### 1. Sign Up / Login
-- Create an account with email and password
-- Or sign in with Google (one-click!)
+- Create account or sign in with Google
 - Your data is private and secure
 
-### 2. Navigate the App
-- **🏠 Home** - Search for flights
-- **🎮 Game Zone** - Play voice controlled games
-- **👤 Profile** - View your stats and achievements
-
-### 3. Search Flights
-- Enter origin city (e.g., "Delhi" or "DEL")
-- Enter destination city (e.g., "Mumbai" or "BOM")
-- Select date range
-- Click "Find Flights"
+### 2. Search Flights
+- Enter origin and destination
+- Select dates
 - View results and save searches
 
-### 4. Play Voice Game (Sky Racer)
-- Click **🎮 Game Zone** in navigation
-- Select **🎤 Voice Controlled Game**
-- Allow microphone permissions when prompted
-- Click **🚀 START GAME**
-- Voice recognition starts automatically
-- Speak commands:
-  - **"up"** - Move airplane up
-  - **"down"** - Move airplane down
-  - **"left"** - Move airplane left
-  - **"right"** - Move airplane right
-- Avoid obstacles (birds, lightning, clouds, UFOs)
-- Beat your high score!
+### 3. Play Games
 
-### 5. Track Your Progress
-- Visit **👤 Profile** to see:
-  - Game high scores
-  - Total games played
-  - Average scores
-  - Flight search statistics
-  - Account information
+#### 🎤 Voice Controlled Mode
+1. Go to **🎮 Game Zone**
+2. Select **🎤 Voice Controlled**
+3. Allow microphone permissions
+4. Click **🚀 START GAME**
+5. Speak commands: "up", "down", "left", "right"
+6. Avoid obstacles, beat your score!
+
+#### ✋ Gesture Controlled Mode
+1. Go to **🎮 Game Zone**
+2. Select **✋ Gesture Controlled**
+3. Allow webcam permissions
+4. Click **✋ START GAME**
+5. **Move your hand** to different zones:
+   - **Top of screen** → Airplane goes UP
+   - **Bottom of screen** → Airplane goes DOWN
+   - **Left of screen** → Airplane goes LEFT
+   - **Right of screen** → Airplane goes RIGHT
+6. Watch the live video feed with hand landmarks
+7. No finger counting needed - just move your hand!
+
+### 4. Track Progress
+Visit **👤 Profile** to see:
+- Separate stats for voice and gesture modes
+- High scores and achievements
+- Progress to legend status
+- Flight search statistics
 
 ---
 
-## 🎮 Voice Game Tips
+## 🎮 Game Tips
 
-✅ **Use Chrome or Edge** - Best browser support for Web Speech API  
-✅ **Allow Microphone** - Grant permissions when prompted  
-✅ **Speak Clearly** - Natural voice, normal volume  
-✅ **Instant Response** - Commands processed in real-time (<100ms)  
-✅ **No Delay** - Airplane moves immediately when you speak  
-✅ **Progressive Difficulty** - Speed increases every 50 points  
-✅ **High Score Sync** - Automatically saved to your profile  
+### Voice Control
+✅ Use Chrome or Edge for best support  
+✅ Speak clearly and naturally  
+✅ Commands: "up", "down", "left", "right"  
+✅ Instant response (<100ms)  
+
+### Gesture Control
+✅ **Good lighting is essential**  
+✅ Keep hand in camera view  
+✅ Move hand to screen zones (not fingers!)  
+✅ Watch the green circle (palm center)  
+✅ No specific gestures needed  
+✅ Camera auto-stops after game  
+✅ Works best on desktop/laptop  
+
+### General
+✅ Progressive difficulty - speed increases  
+✅ Avoid: 🦅 birds, ⚡ thunder, ☁️ clouds, 🛸 UFOs  
+✅ Score: +10 points per obstacle passed  
+✅ Difficulty up every 100 points  
+✅ High scores synced to profile  
 
 ---
 
@@ -373,80 +381,87 @@ VITE_GOOGLE_CLIENT_ID=your_google_client_id_here.apps.googleusercontent.com
 ✅ User-specific data isolation  
 ✅ Google OAuth 2.0 integration  
 ✅ Protected API endpoints  
-✅ Automatic token refresh  
-✅ Secure session management  
-✅ Containerized deployment with Docker  
+✅ Secure WebSocket connections  
+✅ Auto token refresh  
 
 ---
 
 ## 🐛 Troubleshooting
 
-### MongoDB Connection Issues
+### MongoDB Connection
+**Error:** SSL handshake failed  
+**Fix:** Add IP to Network Access in MongoDB Atlas
 
-**Error:** `SSL handshake failed` or `Cannot connect to MongoDB`
+### Google OAuth
+**Error:** Failed to fetch  
+**Fix:** Verify Client ID and authorized origins
 
-**Solution:**
-1. Go to MongoDB Atlas → **Security** → **Network Access**
-2. Click **"+ ADD IP ADDRESS"**
-3. Select **"ALLOW ACCESS FROM ANYWHERE"** (for development)
-4. Wait 1-2 minutes for changes to apply
+### Voice Not Working
+**Error:** Speech recognition not supported  
+**Fix:** Use Chrome/Edge/Safari, allow microphone
 
-### Google OAuth "Failed to Fetch"
+### Gesture Not Working
+**Error:** Hand not detected  
+**Fix:**
+- Ensure good lighting
+- Check webcam permissions
+- Keep hand centered in view
+- Try moving hand to extreme zones
 
-**Solution:**
-1. Verify your `.env` files have the correct `GOOGLE_CLIENT_ID`
-2. Check Google Cloud Console:
-   - **Authorized JavaScript origins** include `http://localhost:5173`
-3. Restart both frontend and backend
-4. Clear browser cache
+### Camera Won't Stop
+**Fix:**
+- Wait 1-2 seconds after game over
+- Click "Force Stop Camera" button
+- Close browser tab if needed
 
-### Voice Recognition Not Working
+### Port Already in Use
+**Error:** Address already in use  
+**Fix:**
+```bash
+# Kill process on port 8000 (Backend)
+# Windows:
+netstat -ano | findstr :8000
+taskkill /PID <PID> /F
 
-**Error:** "Speech recognition not supported"
+# Mac/Linux:
+lsof -ti:8000 | xargs kill -9
 
-**Solution:**
-1. Use Chrome, Edge, or Safari (best support)
-2. Check microphone permissions in browser settings
-3. Ensure you're on `http://localhost` or `https://` (required for mic access)
-4. Try refreshing the page and allow permissions again
+# Kill process on port 5173 (Frontend)
+# Windows:
+netstat -ano | findstr :5173
+taskkill /PID <PID> /F
 
-### Voice Commands Delayed or Not Responding
-
-**Solution:**
-1. Speak clearly and naturally
-2. Check microphone levels in system settings
-3. Ensure no other apps are using the microphone
-4. Try restarting the game
+# Mac/Linux:
+lsof -ti:5173 | xargs kill -9
+```
 
 ---
 
 ## 🔮 Upcoming Features
 
-- 👋 **Gesture Controlled Games** - Play using hand gestures (MediaPipe/OpenCV)
-- 🏆 **Global Leaderboards** - Compete with other players worldwide
-- 🎯 **More Game Modes** - Additional challenges and difficulty levels
-- 🔔 **Price Alerts** - Get notified when flight prices drop
-- 📊 **Advanced Analytics** - Price trends, best time to book
-- 🌐 **Real Flight Data** - Integration with live flight APIs
-- 📧 **Email Notifications** - Search summaries and alerts
-- 🎨 **Theme Customization** - Light/dark mode toggle
+- 🏆 **Global Leaderboards** - Real-time rankings
+- 🎯 **More Game Modes** - Endless mode, time trial
+- 🤖 **AI Difficulty** - Adaptive challenge levels
+- 📈 **Detailed Analytics** - Game performance metrics
+- 🎨 **Theme Customization** - Light/dark mode
 - 📱 **Mobile App** - React Native version
+- 🔔 **Push Notifications** - Game challenges, achievements
 
 ---
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create feature branch (`git checkout -b feature/amazing`)
+3. Commit changes (`git commit -m 'Add feature'`)
+4. Push to branch (`git push origin feature/amazing`)
+5. Open Pull Request
 
 ---
 
 ## 📄 License
 
-This project is open source and available under the [MIT License](LICENSE).
+MIT License - see [LICENSE](LICENSE) file
 
 ---
 
@@ -459,22 +474,22 @@ This project is open source and available under the [MIT License](LICENSE).
 
 ## 🙏 Acknowledgments
 
-- Built with [FastAPI](https://fastapi.tiangolo.com/)
-- UI powered by [Tailwind CSS](https://tailwindcss.com/)
-- Database by [MongoDB Atlas](https://www.mongodb.com/cloud/atlas)
-- Authentication with JWT and [Google OAuth](https://developers.google.com/identity/protocols/oauth2)
-- Voice recognition via [Web Speech API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Speech_API)
-- Containerized with [Docker](https://www.docker.com/)
+- [FastAPI](https://fastapi.tiangolo.com/)
+- [Tailwind CSS](https://tailwindcss.com/)
+- [MongoDB Atlas](https://www.mongodb.com/cloud/atlas)
+- [Google OAuth](https://developers.google.com/identity)
+- [Web Speech API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Speech_API)
+- [MediaPipe](https://mediapipe.dev/)
+- [OpenCV](https://opencv.org/)
 
 ---
 
 ## 📞 Support
 
-If you encounter any issues:
-
-1. Check the [Troubleshooting](#-troubleshooting) section
-2. Open an [issue on GitHub](https://github.com/harshitayadavv/AeroDeals/issues)
-3. Read the setup guide carefully
+Issues? Check:
+1. [Troubleshooting](#-troubleshooting) section
+2. [GitHub Issues](https://github.com/harshitayadavv/AeroDeals/issues)
+3. Setup guides above
 
 ---
 
@@ -484,19 +499,42 @@ If you encounter any issues:
 
 ---
 
-## 📊 Current Status
+## 📊 Feature Status
 
 | Feature | Status |
 |---------|--------|
 | Flight Search | ✅ Complete |
 | User Authentication | ✅ Complete |
 | Google OAuth | ✅ Complete |
-| Search History | ✅ Complete |
-| User Profile | ✅ Complete |
 | Voice Controlled Game | ✅ Complete |
+| Gesture Controlled Game | ✅ Complete |
 | Game Statistics | ✅ Complete |
+| Badge System | ✅ Complete |
 | High Score System | ✅ Complete |
 | Leaderboard API | ✅ Complete |
-| Gesture Controlled Games | 📋 Planned |
+| User Profile | ✅ Complete |
+| WebSocket Games | ✅ Complete |
+| Hand Tracking | ✅ Complete |
+| Global Leaderboard UI | 📋 Planned |
 | Price Alerts | 📋 Planned |
 
+---
+
+## 🎯 Latest Updates
+
+### v2.0.0 - Gesture Control Release
+- ✅ Added gesture-controlled game mode
+- ✅ MediaPipe hand tracking integration
+- ✅ Zone-based control system
+- ✅ Real-time video feed with landmarks
+- ✅ Auto camera shutdown
+- ✅ Gesture-specific badges and stats
+- ✅ Separate high scores for voice and gesture
+- ✅ Enhanced profile with dual game modes
+- ✅ Updated UI for gesture controls
+
+### v1.0.0 - Initial Release
+- ✅ Flight search with MongoDB
+- ✅ Voice-controlled game
+- ✅ User authentication
+- ✅ Game statistics and badges
