@@ -95,7 +95,6 @@ Track your progress and unlock achievements.
 | **Backend** | FastAPI, Motor (Async MongoDB), WebSockets |
 | **AI/ML** | MediaPipe Hand Tracking, Web Speech API |
 | **Database** | MongoDB Atlas, JWT Authentication |
-| **Deployment** | Docker, Docker Compose |
 
 ---
 
@@ -107,9 +106,8 @@ Track your progress and unlock achievements.
 - MongoDB Atlas account
 - Chrome browser
 - Webcam & Microphone
-- Docker (optional)
 
-### Option 1: Local Development
+### Installation & Setup
 
 ```bash
 # Clone repository
@@ -117,51 +115,13 @@ git clone https://github.com/harshitayadavv/AeroDeals.git
 cd AeroDeals
 
 # Backend setup
-cd backend
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+venv\Scripts\activate  # Windows
+# For Mac/Linux: source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-# Edit .env with your credentials
-uvicorn api:app --reload --host 0.0.0.0 --port 8000
 
-# Frontend setup (new terminal)
-cd frontend
-npm install
-cp .env.example .env
-# Edit .env with your credentials
-npm run dev
-```
-
-### Option 2: Docker Deployment
-
-```bash
-# Clone repository
-git clone https://github.com/harshitayadavv/AeroDeals.git
-cd AeroDeals
-
-# Create .env file in root directory
-cp backend/.env.example .env
-# Edit .env with your credentials
-
-# Build and run with Docker Compose
-docker-compose up -d
-
-# Access application
-# Frontend: http://localhost:5173
-# Backend API: http://localhost:8000
-
-# View logs
-docker-compose logs -f
-
-# Stop containers
-docker-compose down
-```
-
-**Environment Variables:**
-
-Backend `.env`:
-```env
+# Create backend .env file
+# Copy and edit with your credentials
 MONGODB_URI=your_mongodb_connection_string
 DATABASE_NAME=aerodeals
 SECRET_KEY=your_secret_key  # openssl rand -hex 32
@@ -169,25 +129,31 @@ GOOGLE_CLIENT_ID=your_google_client_id
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=10080
 ENVIRONMENT=development
+
+# Run backend
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Frontend `.env`:
-```env
+**In a new terminal:**
+
+```bash
+# Frontend setup
+cd frontend
+npm install
+
+# Create frontend .env file
+# Copy and edit with your credentials
 VITE_API_URL=http://127.0.0.1:8000
 VITE_GOOGLE_CLIENT_ID=your_google_client_id
+
+# Run frontend
+npm run dev
 ```
 
----
-
-## 🐳 Docker Configuration
-
-The project includes Docker support for easy deployment:
-
-- **Dockerfile** - Backend containerization
-- **docker-compose.yml** - Multi-container orchestration
-- **Includes:** Backend API, Frontend dev server, MongoDB (optional)
-
-No changes needed to Docker files - they work out of the box with proper `.env` configuration.
+**Access the application:**
+- Frontend: http://localhost:5173
+- Backend API: http://localhost:8000
+- API Docs: http://localhost:8000/docs
 
 ---
 
@@ -280,9 +246,8 @@ GitHub: [@harshitayadavv](https://github.com/harshitayadavv)
 | Gesture Game | ✅ Complete |
 | User Profiles | ✅ Complete |
 | Achievements | ✅ Complete |
-| Docker Support | ✅ Complete |
 
-**Latest Release:** v2.0.0 - Gesture Control & Docker Support 🎉
+**Latest Release:** v2.0.0 - Gesture Control Support 🎉
 
 ---
 
