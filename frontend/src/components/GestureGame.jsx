@@ -161,7 +161,7 @@ function GestureGame({ onBack }) {
             // Update game state from server
             console.log('🔄 Game state update:', data.state.airplane.x, data.state.airplane.y);
             setGameState(data.state);
-            setHandDetected(data.hand_detected || false);
+            // DON'T update handDetected here - it comes from video_frame
             
             const gesture = data.gesture;
             if (gesture && gesture !== 'none') {
@@ -180,7 +180,7 @@ function GestureGame({ onBack }) {
           else if (data.type === 'video_frame') {
             // Update processed video frame
             setProcessedFrame(data.frame);
-            setHandDetected(data.hand_detected);
+            setHandDetected(data.hand_detected); // ✅ THIS is where we update hand detection
             setGestureDescription(data.description || '');
             
             const gesture = data.gesture;

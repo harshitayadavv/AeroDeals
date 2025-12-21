@@ -48,9 +48,6 @@ function GameZone() {
                 <span className="bg-white/20 px-2 py-1 rounded">👈 Left → Left</span>
                 <span className="bg-white/20 px-2 py-1 rounded">👉 Right → Right</span>
               </div>
-              <div className="text-xs text-white/70 mt-2">
-                No finger counting needed!
-              </div>
             </div>
             <div className="mt-4 bg-white text-purple-600 rounded-full px-6 py-2 text-sm font-bold inline-block">
               ✅ Play Now!

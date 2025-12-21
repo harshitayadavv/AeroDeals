@@ -6,12 +6,17 @@ import logging
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+# Global db variable for compatibility
+db = None
+
 class Database:
     client: AsyncIOMotorClient = None
     
     @classmethod
     async def connect_db(cls):
         """Connect to MongoDB Atlas"""
+        global db  # Add this line
+        
         try:
             mongodb_uri = os.getenv("MONGODB_URI")
             
@@ -30,6 +35,10 @@ class Database:
             # Test connection
             await cls.client.admin.command('ping')
             logger.info("✅ Successfully connected to MongoDB Atlas!")
+            
+            # Set global db variable for compatibility
+            database_name = os.getenv("DATABASE_NAME", "aerodeals")
+            db = cls.client[database_name]
             
         except Exception as e:
             logger.error(f"❌ Failed to connect to MongoDB: {e}")
@@ -50,3 +59,18 @@ class Database:
         
         database_name = os.getenv("DATABASE_NAME", "aerodeals")
         return cls.client[database_name][collection_name]
+
+
+# Compatibility functions for api.py
+async def connect_to_mongo():
+    """Compatibility wrapper for Database.connect_db()"""
+    await Database.connect_db()
+
+
+async def close_mongo_connection():
+    """Compatibility wrapper for Database.close_db()"""
+    await Database.close_db()
+
+
+# Export for imports
+__all__ = ['Database', 'db', 'connect_to_mongo', 'close_mongo_connection']

@@ -1,16 +1,18 @@
 """
-AeroDeals Games Package
-Voice and Gesture Controlled Games
+Games package initialization
+backend/games/__init__.py
 """
 
-from backend.games.voice_game import VoiceGameEngine, get_game, delete_game
-from backend.games.game_websocket import GameConnectionManager, manager, handle_voice_game_websocket
+# Remove the 'backend.' prefix - it's already in the backend folder!
+
+from games.voice_game import VoiceGameEngine, get_game, delete_game
+from games.gesture_game import GestureGameEngine, get_gesture_game, delete_gesture_game
 
 __all__ = [
     'VoiceGameEngine',
     'get_game',
     'delete_game',
-    'GameConnectionManager',
-    'manager',
-    'handle_voice_game_websocket'
+    'GestureGameEngine',
+    'get_gesture_game',
+    'delete_gesture_game'
 ]

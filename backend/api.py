@@ -1,517 +1,589 @@
-from fastapi import FastAPI, Query, HTTPException, Depends, status, WebSocket
+"""
+Complete api.py with auth endpoints included directly
+"""
+
+from fastapi import FastAPI, HTTPException, Depends, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordRequestForm
-
-from src.flight_scraper import FlightScraper
-from src.data_processor import FlightDataProcessor
-from src.utils import validate_date_format
-from src.database import Database
-from src.models import User, UserCreate, UserResponse, Token, UserLogin
-from src.auth import (
-    get_password_hash,
-    authenticate_user,
-    create_access_token,
-    get_current_active_user,
-    verify_google_token,
-    get_or_create_google_user
-)
-
 from datetime import datetime, timedelta
-from bson import ObjectId
 import logging
 import uuid
+import os
 
-# ==================== APP SETUP ====================
+# Database
+from src.database import Database, connect_to_mongo, close_mongo_connection
 
-app = FastAPI(title="AeroDeals API", version="2.0.0")
+# Auth functions
+from src.auth import (
+    get_current_user,
+    create_access_token,
+    verify_google_token,
+    get_or_create_google_user,
+    authenticate_user,
+    get_user_by_email,
+    get_password_hash,
+    ACCESS_TOKEN_EXPIRE_MINUTES
+)
 
+# Models
+from src.models import User
+
+# Game imports
+from games.gesture_websocket import handle_gesture_game_websocket
+
+logger = logging.getLogger(__name__)
+
+
+# ===== CREATE APP =====
+app = FastAPI(
+    title="AeroDeals API",
+    description="Flight search and AI-powered games",
+    version="2.0.0"
+)
+
+
+# ===== CORS =====
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-# ==================== DB EVENTS ====================
-
+# ===== STARTUP/SHUTDOWN =====
 @app.on_event("startup")
-async def startup_db():
-    await Database.connect_db()
-    logger.info("🚀 AeroDeals API started")
+async def startup_event():
+    """Connect to MongoDB on startup"""
+    await connect_to_mongo()
+    logger.info("✅ Startup complete - MongoDB connected")
+
 
 @app.on_event("shutdown")
-async def shutdown_db():
-    await Database.close_db()
+async def shutdown_event():
+    """Close MongoDB connection on shutdown"""
+    await close_mongo_connection()
     logger.info("👋 AeroDeals API shutdown")
 
-# ==================== ROOT ====================
 
+# ===== HELPER TO GET DB =====
+def get_db():
+    """Get database instance"""
+    database_name = os.getenv("DATABASE_NAME", "aerodeals")
+    return Database.client[database_name]
+
+
+# ===== ROOT ENDPOINT =====
 @app.get("/")
 async def root():
+    """API welcome message"""
     return {
-        "message": "✈️ Welcome to AeroDeals API",
+        "message": "Welcome to AeroDeals API",
         "version": "2.0.0",
-        "endpoints": {
-            "auth": "/auth/*",
-            "search": "/search",
-            "history": "/history",
-            "saved": "/saved",
-            "games": "/games/*"
+        "features": ["Flight Search", "Voice Game", "Gesture Game"]
+    }
+
+
+# ===== AUTH ENDPOINTS =====
+
+@app.post("/auth/register")
+async def register(user_data: dict):
+    """Register new user"""
+    try:
+        email = user_data.get("email")
+        password = user_data.get("password")
+        full_name = user_data.get("full_name", "")
+        
+        # Check if user exists
+        existing_user = await get_user_by_email(email)
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        
+        # Create user
+        users_collection = Database.get_collection("users")
+        new_user = {
+            "email": email,
+            "full_name": full_name,
+            "hashed_password": get_password_hash(password),
+            "google_id": None,
+            "profile_picture": None,
+            "is_active": True,
+            "created_at": datetime.utcnow()
         }
+        
+        result = await users_collection.insert_one(new_user)
+        
+        # Create token
+        access_token = create_access_token(
+            data={"sub": email},
+            expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        )
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "email": email,
+                "full_name": full_name
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Registration error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/auth/login-json")
+async def login(credentials: dict):
+    """Login with email and password"""
+    try:
+        email = credentials.get("email")
+        password = credentials.get("password")
+        
+        user = await authenticate_user(email, password)
+        if not user:
+            raise HTTPException(
+                status_code=401,
+                detail="Incorrect email or password"
+            )
+        
+        # Create token
+        access_token = create_access_token(
+            data={"sub": user.email},
+            expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        )
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "email": user.email,
+                "full_name": user.full_name
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/auth/google")
+async def google_login(token_data: dict):
+    """Login with Google OAuth"""
+    try:
+        token = token_data.get("credential") or token_data.get("token")
+        
+        if not token:
+            raise HTTPException(status_code=400, detail="No token provided")
+        
+        # Verify Google token
+        google_user_info = await verify_google_token(token)
+        
+        # Get or create user
+        user = await get_or_create_google_user(google_user_info)
+        
+        # Create JWT token
+        access_token = create_access_token(
+            data={"sub": user.email},
+            expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        )
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "email": user.email,
+                "full_name": user.full_name,
+                "picture": user.profile_picture
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Google login error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/auth/me")
+async def get_me(current_user: User = Depends(get_current_user)):
+    """Get current user info"""
+    return {
+        "email": current_user.email,
+        "full_name": current_user.full_name,
+        "profile_picture": current_user.profile_picture,
+        "google_id": current_user.google_id,
+        "created_at": current_user.created_at
     }
 
-# ==================== AUTH ====================
 
-@app.post("/auth/register", response_model=UserResponse, status_code=201)
-async def register(user: UserCreate):
-    users = Database.get_collection("users")
-
-    if await users.find_one({"email": user.email}):
-        raise HTTPException(400, "Email already registered")
-
-    doc = {
-        "email": user.email,
-        "full_name": user.full_name,
-        "hashed_password": get_password_hash(user.password),
-        "is_active": True,
-        "created_at": datetime.utcnow()
-    }
-
-    res = await users.insert_one(doc)
-    return UserResponse(
-        id=str(res.inserted_id),
-        email=user.email,
-        full_name=user.full_name,
-        created_at=doc["created_at"]
-    )
-
-@app.post("/auth/login", response_model=Token)
-async def login(form: OAuth2PasswordRequestForm = Depends()):
-    user = await authenticate_user(form.username, form.password)
-    if not user:
-        raise HTTPException(401, "Invalid credentials")
-
-    token = create_access_token({"sub": user.email})
-    return Token(access_token=token, token_type="bearer")
-
-@app.post("/auth/login-json", response_model=Token)
-async def login_json(data: UserLogin):
-    user = await authenticate_user(data.email, data.password)
-    if not user:
-        raise HTTPException(401, "Invalid credentials")
-
-    token = create_access_token({"sub": user.email})
-    return Token(access_token=token, token_type="bearer")
-
-@app.post("/auth/google", response_model=Token)
-async def google_login(body: dict):
-    token = body.get("token")
-    if not token:
-        raise HTTPException(400, "Google token required")
-
-    google_user = await verify_google_token(token)
-    user = await get_or_create_google_user(google_user)
-
-    jwt = create_access_token({"sub": user.email})
-    return Token(access_token=jwt, token_type="bearer")
-
-@app.get("/auth/me", response_model=UserResponse)
-async def me(current_user: User = Depends(get_current_active_user)):
-    return UserResponse(
-        id=str(current_user.id),
-        email=current_user.email,
-        full_name=current_user.full_name,
-        profile_picture=current_user.profile_picture,
-        created_at=current_user.created_at
-    )
-
-# ==================== FLIGHT SEARCH ====================
+# ===== YOUR EXISTING FLIGHT ENDPOINTS GO HERE =====
 
 @app.get("/search")
 async def search_flights(
-    origin: str = Query(..., description="Origin city"),
-    destination: str = Query(..., description="Destination city"),
-    start_date: str = Query(..., description="Start date YYYY-MM-DD"),
-    end_date: str = Query(..., description="End date YYYY-MM-DD"),
-    current_user: User = Depends(get_current_active_user)
+    origin: str,
+    destination: str,
+    start_date: str,
+    end_date: str,
+    current_user: User = Depends(get_current_user)
 ):
-    logger.info(f"Search: {origin} → {destination} ({start_date} to {end_date}) by {current_user.email}")
-
-    if not all(validate_date_format(d) for d in [start_date, end_date]):
-        raise HTTPException(400, "Invalid date format. Use YYYY-MM-DD")
-
-    scraper = FlightScraper()
+    """Search flights and save to history"""
     try:
-        results = scraper.find_best_deals(
-            origin.upper(), destination.upper(), start_date, end_date
-        )
-    except Exception as e:
-        logger.error(f"Scraping failed: {e}")
-        raise HTTPException(500, "Flight scraping failed")
-
-    if results.empty:
-        return {
-            "flights": [],
-            "analysis": {"min_price": 0, "avg_price": 0, "total_flights": 0},
-            "message": "No flights found"
-        }
-
-    analysis = FlightDataProcessor.analyze_deals(results)
-    flights = results.drop(columns=["price_num"], errors="ignore").to_dict("records")
-
-    try:
-        searches = Database.get_collection("searches")
-        doc = {
-            "user_id": str(current_user.id),
-            "origin": origin.upper(),
-            "destination": destination.upper(),
+        logger.info(f"🔍 Flight search: {origin} → {destination} ({start_date} to {end_date})")
+        
+        from src.flight_scraper import FlightScraper
+        from src.data_processor import process_flights
+        
+        # Search flights
+        scraper = FlightScraper()
+        flights = scraper.find_best_deals(origin, destination, start_date, end_date)
+        
+        if not flights:
+            logger.warning(f"⚠️ No flights found for {origin} → {destination}")
+            return {
+                "origin": origin,
+                "destination": destination,
+                "start_date": start_date,
+                "end_date": end_date,
+                "flights": [],
+                "analysis": {
+                    "min_price": 0,
+                    "max_price": 0,
+                    "avg_price": 0,
+                    "total_flights": 0
+                }
+            }
+        
+        # Process flights data
+        analysis = process_flights(flights)
+        
+        # Save to history
+        db = get_db()
+        search_record = {
+            "user_email": current_user.email,
+            "origin": origin,
+            "destination": destination,
             "start_date": start_date,
             "end_date": end_date,
             "flights": flights,
             "analysis": analysis,
-            "is_saved": False,
             "created_at": datetime.utcnow(),
-            "expires_at": datetime.utcnow() + timedelta(days=7)
+            "is_saved": False
         }
-
-        res = await searches.insert_one(doc)
-        search_id = str(res.inserted_id)
-        logger.info(f"✅ Search saved: {search_id}")
-
+        
+        result = await db.search_history.insert_one(search_record)
+        search_record["_id"] = str(result.inserted_id)
+        
+        logger.info(f"✅ Found {len(flights)} flights, saved to history")
+        
         return {
-            "search_id": search_id,
-            "flights": flights,
-            "analysis": analysis
-        }
-    except Exception as e:
-        logger.error(f"Save failed: {e}")
-        return {
-            "flights": flights,
+            "id": str(result.inserted_id),
+            "origin": origin,
+            "destination": destination,
+            "start_date": start_date,
+            "end_date": end_date,
+            "flights": flights[:10],  # Return first 10
             "analysis": analysis,
-            "warning": "Search not saved"
+            "total_flights": len(flights)
         }
-
-@app.get("/history")
-async def get_history(current_user: User = Depends(get_current_active_user)):
-    try:
-        searches = Database.get_collection("searches")
-        cursor = searches.find({
-            "user_id": str(current_user.id),
-            "expires_at": {"$gt": datetime.utcnow()}
-        }).sort("created_at", -1).limit(50)
-
-        history = []
-        async for doc in cursor:
-            history.append({
-                "id": str(doc["_id"]),
-                "origin": doc["origin"],
-                "destination": doc["destination"],
-                "start_date": doc["start_date"],
-                "end_date": doc["end_date"],
-                "total_flights": doc["analysis"]["total_flights"],
-                "min_price": doc["analysis"]["min_price"],
-                "is_saved": doc.get("is_saved", False),
-                "created_at": doc["created_at"].isoformat(),
-                "expires_at": doc["expires_at"].isoformat()
-            })
-
-        return {"history": history, "count": len(history)}
+        
     except Exception as e:
-        logger.error(f"History fetch failed: {e}")
-        raise HTTPException(500, "Failed to fetch history")
+        logger.error(f"❌ Search error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/saved")
-async def get_saved(current_user: User = Depends(get_current_active_user)):
-    try:
-        searches = Database.get_collection("searches")
-        cursor = searches.find({
-            "user_id": str(current_user.id),
-            "is_saved": True
-        }).sort("created_at", -1)
-
-        saved = []
-        async for doc in cursor:
-            saved.append({
-                "id": str(doc["_id"]),
-                "origin": doc["origin"],
-                "destination": doc["destination"],
-                "start_date": doc["start_date"],
-                "end_date": doc["end_date"],
-                "total_flights": doc["analysis"]["total_flights"],
-                "min_price": doc["analysis"]["min_price"],
-                "created_at": doc["created_at"].isoformat()
-            })
-
-        return {"saved": saved, "count": len(saved)}
-    except Exception as e:
-        logger.error(f"Saved fetch failed: {e}")
-        raise HTTPException(500, "Failed to fetch saved searches")
 
 @app.get("/search/{search_id}")
 async def get_search_details(
     search_id: str,
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_user)
 ):
+    """Get detailed flight information for a search"""
     try:
-        if not ObjectId.is_valid(search_id):
-            raise HTTPException(400, "Invalid search ID")
-
-        searches = Database.get_collection("searches")
-        doc = await searches.find_one({
+        from bson import ObjectId
+        
+        db = get_db()
+        search = await db.search_history.find_one({
             "_id": ObjectId(search_id),
-            "user_id": str(current_user.id)
+            "user_email": current_user.email
         })
-
-        if not doc:
-            raise HTTPException(404, "Search not found")
-
-        return {
-            "id": str(doc["_id"]),
-            "origin": doc["origin"],
-            "destination": doc["destination"],
-            "start_date": doc["start_date"],
-            "end_date": doc["end_date"],
-            "flights": doc["flights"],
-            "analysis": doc["analysis"],
-            "is_saved": doc["is_saved"],
-            "created_at": doc["created_at"].isoformat()
-        }
-    except HTTPException:
-        raise
+        
+        if not search:
+            raise HTTPException(status_code=404, detail="Search not found")
+        
+        search["_id"] = str(search["_id"])
+        return search
+        
     except Exception as e:
-        logger.error(f"Search details failed: {e}")
-        raise HTTPException(500, "Failed to fetch search details")
+        logger.error(f"Error fetching search details: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/history")
+async def get_search_history(current_user: User = Depends(get_current_user)):
+    """Get user's search history"""
+    try:
+        db = get_db()
+        
+        # Get searches from last 7 days
+        seven_days_ago = datetime.utcnow() - timedelta(days=7)
+        
+        cursor = db.search_history.find({
+            "user_email": current_user.email,
+            "created_at": {"$gte": seven_days_ago},
+            "is_saved": False
+        }).sort("created_at", -1)
+        
+        history = await cursor.to_list(length=100)
+        
+        # Convert ObjectId to string
+        for item in history:
+            item["_id"] = str(item["_id"])
+        
+        return {"history": history, "count": len(history)}
+        
+    except Exception as e:
+        logger.error(f"Error fetching history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/saved")
+async def get_saved_searches(current_user: User = Depends(get_current_user)):
+    """Get user's saved searches"""
+    try:
+        db = get_db()
+        
+        cursor = db.search_history.find({
+            "user_email": current_user.email,
+            "is_saved": True
+        }).sort("created_at", -1)
+        
+        saved = await cursor.to_list(length=100)
+        
+        for item in saved:
+            item["_id"] = str(item["_id"])
+        
+        return {"saved": saved, "count": len(saved)}
+        
+    except Exception as e:
+        logger.error(f"Error fetching saved: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/save/{search_id}")
 async def save_search(
     search_id: str,
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_user)
 ):
+    """Save a search permanently"""
     try:
-        if not ObjectId.is_valid(search_id):
-            raise HTTPException(400, "Invalid search ID")
-
-        searches = Database.get_collection("searches")
-        result = await searches.update_one(
-            {"_id": ObjectId(search_id), "user_id": str(current_user.id)},
+        from bson import ObjectId
+        
+        db = get_db()
+        result = await db.search_history.update_one(
+            {
+                "_id": ObjectId(search_id),
+                "user_email": current_user.email
+            },
             {"$set": {"is_saved": True}}
         )
-
-        if result.matched_count == 0:
-            raise HTTPException(404, "Search not found")
-
-        return {"message": "Search saved successfully", "search_id": search_id}
-    except HTTPException:
-        raise
+        
+        if result.modified_count == 0:
+            raise HTTPException(status_code=404, detail="Search not found")
+        
+        return {"success": True, "message": "Search saved"}
+        
     except Exception as e:
-        logger.error(f"Save search failed: {e}")
-        raise HTTPException(500, "Failed to save search")
+        logger.error(f"Error saving search: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.delete("/history/{search_id}")
-async def delete_history(
+async def delete_search(
     search_id: str,
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_user)
 ):
+    """Delete a search from history"""
     try:
-        if not ObjectId.is_valid(search_id):
-            raise HTTPException(400, "Invalid search ID")
-
-        searches = Database.get_collection("searches")
-        result = await searches.delete_one({
+        from bson import ObjectId
+        
+        db = get_db()
+        result = await db.search_history.delete_one({
             "_id": ObjectId(search_id),
-            "user_id": str(current_user.id)
+            "user_email": current_user.email
         })
-
+        
         if result.deleted_count == 0:
-            raise HTTPException(404, "Search not found")
-
-        return {"message": "Search deleted successfully"}
-    except HTTPException:
-        raise
+            raise HTTPException(status_code=404, detail="Search not found")
+        
+        return {"success": True, "message": "Search deleted"}
+        
     except Exception as e:
-        logger.error(f"Delete failed: {e}")
-        raise HTTPException(500, "Failed to delete search")
+        logger.error(f"Error deleting search: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/saved/{search_id}")
-async def delete_saved(
-    search_id: str,
-    current_user: User = Depends(get_current_active_user)
-):
-    try:
-        if not ObjectId.is_valid(search_id):
-            raise HTTPException(400, "Invalid search ID")
 
-        searches = Database.get_collection("searches")
-        result = await searches.delete_one({
-            "_id": ObjectId(search_id),
-            "user_id": str(current_user.id),
-            "is_saved": True
-        })
-
-        if result.deleted_count == 0:
-            raise HTTPException(404, "Saved search not found")
-
-        return {"message": "Search removed from saved"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Delete saved failed: {e}")
-        raise HTTPException(500, "Failed to delete saved search")
-
-# ==================== GAME ENDPOINTS ====================
+# ===== GAME ENDPOINTS =====
 
 @app.post("/games/score")
 async def submit_game_score(
     score_data: dict,
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_user)
 ):
-    """Submit game score and update user profile"""
+    """Submit game score"""
     try:
         game_type = score_data.get("game_type", "voice")
-        score = int(score_data.get("score", 0))
-
-        users = Database.get_collection("users")
-        user = await users.find_one({"_id": ObjectId(current_user.id)})
-
-        game_stats = user.get("game_stats", {})
-        stats = game_stats.get(game_type, {
+        score = score_data.get("score", 0)
+        email = current_user.email  # FIX: Use .email not ["email"]
+        
+        logger.info(f"📊 Score submission: {email} - {game_type}: {score}")
+        
+        db = get_db()
+        existing_stats = await db.game_stats.find_one({"email": email})
+        
+        if not existing_stats:
+            existing_stats = {
+                "email": email,
+                "voice": {
+                    "high_score": 0,
+                    "total_games": 0,
+                    "total_score": 0,
+                    "average_score": 0,
+                    "last_played": None
+                },
+                "gesture": {
+                    "high_score": 0,
+                    "total_games": 0,
+                    "total_score": 0,
+                    "average_score": 0,
+                    "last_played": None
+                },
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            }
+        
+        game_stats = existing_stats.get(game_type, {
             "high_score": 0,
             "total_games": 0,
             "total_score": 0,
+            "average_score": 0,
             "last_played": None
         })
-
-        stats["total_games"] += 1
-        stats["total_score"] += score
-        stats["last_played"] = datetime.utcnow()
-
-        is_high = score > stats["high_score"]
-        if is_high:
-            stats["high_score"] = score
-            logger.info(f"🏆 NEW HIGH SCORE! {current_user.email}: {score}")
-
-        game_stats[game_type] = stats
-
-        await users.update_one(
-            {"_id": ObjectId(current_user.id)},
-            {"$set": {
-                "game_stats": game_stats,
-                "last_game_played": datetime.utcnow()
-            }}
+        
+        is_high_score = score > game_stats.get("high_score", 0)
+        new_total_games = game_stats.get("total_games", 0) + 1
+        new_total_score = game_stats.get("total_score", 0) + score
+        new_average = round(new_total_score / new_total_games, 2)
+        
+        updated_game_stats = {
+            "high_score": max(score, game_stats.get("high_score", 0)),
+            "total_games": new_total_games,
+            "total_score": new_total_score,
+            "average_score": new_average,
+            "last_played": datetime.utcnow()
+        }
+        
+        existing_stats[game_type] = updated_game_stats
+        existing_stats["updated_at"] = datetime.utcnow()
+        
+        logger.info(f"💾 Updating stats in database for {email}")
+        logger.info(f"   New high score: {updated_game_stats['high_score']}")
+        logger.info(f"   Total games: {updated_game_stats['total_games']}")
+        
+        result = await db.game_stats.update_one(
+            {"email": email},
+            {"$set": existing_stats},
+            upsert=True
         )
-
-        logger.info(f"📊 Score submitted: {score} for {current_user.email}")
-
+        
+        logger.info(f"✅ Database update result: matched={result.matched_count}, modified={result.modified_count}")
+        
+        if is_high_score:
+            logger.info(f"🏆 NEW HIGH SCORE! {email}: {score} ({game_type})")
+        
         return {
             "success": True,
-            "score": score,
-            "is_high_score": is_high,
-            "high_score": stats["high_score"],
-            "total_games": stats["total_games"],
-            "average_score": round(stats["total_score"] / stats["total_games"], 2)
+            "is_high_score": is_high_score,
+            "high_score": updated_game_stats["high_score"],
+            "total_games": updated_game_stats["total_games"],
+            "average_score": updated_game_stats["average_score"]
         }
-
+        
     except Exception as e:
-        logger.error(f"Game score error: {e}")
-        raise HTTPException(500, "Failed to submit score")
+        logger.error(f"Error submitting score: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/games/stats")
-async def get_game_stats(current_user: User = Depends(get_current_active_user)):
+async def get_game_stats(current_user: User = Depends(get_current_user)):
     """Get user's game statistics"""
     try:
-        users = Database.get_collection("users")
-        user = await users.find_one({"_id": ObjectId(current_user.id)})
-
-        game_stats = user.get("game_stats", {})
-        formatted = {}
-
-        for g, s in game_stats.items():
-            formatted[g] = {
-                "high_score": s.get("high_score", 0),
-                "total_games": s.get("total_games", 0),
-                "total_score": s.get("total_score", 0),
-                "average_score": round(
-                    s["total_score"] / s["total_games"], 2
-                ) if s["total_games"] else 0,
-                "last_played": s.get("last_played")
+        email = current_user.email
+        db = get_db()
+        
+        stats = await db.game_stats.find_one({"email": email})
+        
+        if not stats:
+            return {
+                "stats": {
+                    "voice": {
+                        "high_score": 0,
+                        "total_games": 0,
+                        "average_score": 0,
+                        "last_played": None
+                    },
+                    "gesture": {
+                        "high_score": 0,
+                        "total_games": 0,
+                        "average_score": 0,
+                        "last_played": None
+                    }
+                }
             }
-
+        
+        stats.pop("_id", None)
+        
         return {
-            "stats": formatted,
-            "last_played": user.get("last_game_played"),
-            "total_games_all_types": sum(s.get("total_games", 0) for s in game_stats.values())
+            "stats": {
+                "voice": stats.get("voice", {
+                    "high_score": 0,
+                    "total_games": 0,
+                    "average_score": 0,
+                    "last_played": None
+                }),
+                "gesture": stats.get("gesture", {
+                    "high_score": 0,
+                    "total_games": 0,
+                    "average_score": 0,
+                    "last_played": None
+                })
+            }
         }
-
+        
     except Exception as e:
-        logger.error(f"Stats fetch failed: {e}")
-        raise HTTPException(500, "Failed to fetch stats")
+        logger.error(f"Error fetching stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/games/leaderboard")
-async def leaderboard(
-    game_type: str = Query("voice", description="Game type"),
-    limit: int = Query(10, description="Top N players")
-):
-    """Get leaderboard for a game type"""
-    try:
-        users = Database.get_collection("users")
+# ===== GESTURE GAME =====
 
-        pipeline = [
-            {"$match": {f"game_stats.{game_type}": {"$exists": True}}},
-            {"$project": {
-                "full_name": 1,
-                "email": 1,
-                "high_score": f"$game_stats.{game_type}.high_score",
-                "total_games": f"$game_stats.{game_type}.total_games"
-            }},
-            {"$sort": {"high_score": -1}},
-            {"$limit": limit}
-        ]
-
-        leaderboard = []
-        async for u in users.aggregate(pipeline):
-            leaderboard.append({
-                "rank": len(leaderboard) + 1,
-                "player": u.get("full_name", "Anonymous"),
-                "email": u["email"].split("@")[0] + "***",
-                "high_score": u.get("high_score", 0),
-                "total_games": u.get("total_games", 0)
-            })
-
-        return {
-            "game_type": game_type,
-            "leaderboard": leaderboard,
-            "total_players": len(leaderboard)
-        }
-
-    except Exception as e:
-        logger.error(f"Leaderboard failed: {e}")
-        raise HTTPException(500, "Failed to fetch leaderboard")
-
-
-# ==================== GAME WEBSOCKET (OPTIONAL) ====================
-# Uncomment if using full backend WebSocket implementation
-
-@app.post("/games/voice/session")
-async def create_voice_session(
-    current_user: User = Depends(get_current_active_user)
-):
-    '''Create a new voice game session'''
+@app.post("/games/gesture/session")
+async def create_gesture_game_session(current_user: User = Depends(get_current_user)):
+    """Create gesture game session"""
     session_id = str(uuid.uuid4())
-    logger.info(f"🎮 Voice session {session_id} for {current_user.email}")
+    logger.info(f"✋ Gesture session: {session_id}")
+    
     return {
         "session_id": session_id,
-        "websocket_url": f"/ws/game/voice/{session_id}"
+        "websocket_url": f"/ws/gesture/{session_id}"
     }
 
 
-@app.websocket("/ws/game/voice/{session_id}")
-async def voice_game_ws(websocket: WebSocket, session_id: str):
-    '''WebSocket endpoint for voice game'''
-    from games.game_websocket import handle_voice_game_websocket
-    await handle_voice_game_websocket(websocket, session_id)
+@app.websocket("/ws/gesture/{session_id}")
+async def gesture_game_websocket(websocket: WebSocket, session_id: str):
+    """Gesture game WebSocket"""
+    try:
+        await handle_gesture_game_websocket(websocket, session_id)
+    except Exception as e:
+        logger.error(f"Gesture WebSocket error: {e}")
+        raise

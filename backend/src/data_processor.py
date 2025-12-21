@@ -1,34 +1,63 @@
-import pandas as pd
-from datetime import datetime
+"""
+Process and analyze flight data
+"""
 
-class FlightDataProcessor:
-    @staticmethod
-    def clean_price(price_str):
-        """Clean price string and convert to float"""
-        return float(price_str.replace('$', '').replace(',', ''))
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def process_flights(flights):
+    """
+    Analyze flight data and return statistics
     
-    @staticmethod
-    def analyze_deals(flights_df):
-        """Analyze flight deals and return insights"""
-        if flights_df.empty:
-            return None
-            
-        flights_df['price_num'] = flights_df['price'].apply(lambda x: FlightDataProcessor.clean_price(x))
+    Args:
+        flights: List of flight dictionaries
+    
+    Returns:
+        Dictionary with min, max, avg prices and flight count
+    """
+    try:
+        if not flights:
+            return {
+                "min_price": 0,
+                "max_price": 0,
+                "avg_price": 0,
+                "total_flights": 0
+            }
         
-        analysis = {
-            'best_deal': flights_df.iloc[0].to_dict(),
-            'avg_price': flights_df['price_num'].mean(),
-            'min_price': flights_df['price_num'].min(),
-            'max_price': flights_df['price_num'].max(),
-            'total_flights': len(flights_df)
+        # Extract prices (handle both "$150" and "150" formats)
+        prices = []
+        for flight in flights:
+            price_str = flight.get('price', '$0')
+            try:
+                # Remove $ and convert to float
+                price = float(price_str.replace('$', '').replace(',', ''))
+                prices.append(price)
+            except:
+                logger.warning(f"Could not parse price: {price_str}")
+                continue
+        
+        if not prices:
+            return {
+                "min_price": 0,
+                "max_price": 0,
+                "avg_price": 0,
+                "total_flights": len(flights)
+            }
+        
+        return {
+            "min_price": min(prices),
+            "max_price": max(prices),
+            "avg_price": sum(prices) / len(prices),
+            "total_flights": len(flights)
         }
         
-        return analysis
-    
-    @staticmethod
-    def export_to_csv(flights_df, filename):
-        """Export flight data to CSV"""
-        if not flights_df.empty:
-            flights_df.to_csv(filename, index=False)
-            return True
-        return False
+    except Exception as e:
+        logger.error(f"Error processing flights: {e}")
+        return {
+            "min_price": 0,
+            "max_price": 0,
+            "avg_price": 0,
+            "total_flights": len(flights) if flights else 0
+        }
