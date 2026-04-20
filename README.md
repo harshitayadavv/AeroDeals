@@ -1,77 +1,93 @@
 # ✈️ SkyRacer
 
-**Play interactive AI-powered games with voice and gesture control!**
+**An AI-powered gesture and voice controlled airplane game!**
 
-SkyRacer is a full-stack application that features voice and gesture-controlled games. Built with React, FastAPI, MongoDB, Web Speech API, and MediaPipe technologies.
+SkyRacer is a full-stack game where you control an airplane using your **hand swipes** or **voice commands** — no keyboard needed. Built with React, FastAPI, MongoDB, MediaPipe, and WebSockets.
 
-![Landing Page](screenshots/landing.png)
+---
+
+## 🎮 Live Demo
+
+> Frontend: `http://localhost:5173`  
+> Backend API: `http://localhost:8000`  
+> API Docs: `http://localhost:8000/docs`
 
 ---
 
 ## 🚀 Features
 
-### 🎮 Game Zone - Sky Racer
+### ✋ Gesture Controlled Mode (Swipe to fly!)
 
-Choose your control method and navigate through obstacles!
+Control the airplane by swiping your hand in front of the camera.
 
-#### 🎤 Voice Controlled Mode
+**How it works:**
+- Hold your hand still for ~1 second (camera learns your hand)
+- Swipe **up** → airplane moves up
+- Swipe **down** → airplane moves down
+- Swipe **left** → airplane moves left
+- Swipe **right** → airplane moves right
+- Bring hand back to center → ready for next swipe
 
-Control the airplane with your voice commands.
-
-![Voice Game](screenshots/voice_game.png)
-
-**Features:**
-- Real-time speech recognition (Web Speech API)
-- Instant response: "up", "down", "left", "right"
-- Progressive difficulty with speed multipliers
-- Score tracking per user
-
-#### ✋ Gesture Controlled Mode
-
-Move your hand to different screen zones to control the airplane.
-
-![Gesture Game](screenshots/gesture-game.png)
-
-**Features:**
-- MediaPipe hand tracking with landmarks
-- Zone-based controls (no finger counting!)
-- Live video feed with hand visualization
-- Auto camera shutdown after game
-
-![Gesture Controls](screenshots/gesture-controls.png)
-
-**Obstacles to Avoid:**
-- 🦅 Birds
-- ⚡ Lightning bolts
-- ☁️ Clouds
-- 🛸 UFOs
+**Tech:** MOG2 background subtraction (OpenCV) tracks your swipe direction in real time. No skin color detection — works in any lighting.
 
 ---
 
-### 👤 User Profile & Statistics
+### 🎤 Voice Controlled Mode
 
-Track your progress and unlock achievements.
+Control the airplane by speaking.
 
-![User Profile](screenshots/profile.png)
+**Commands:** Say `"up"`, `"down"`, `"left"`, `"right"`
 
-**Dashboard Features:**
+**Tech:** Web Speech API (Chrome) — works offline, no API key needed.
+
+---
+
+### 🏆 Obstacles to Avoid
+
+| Obstacle | Icon |
+|----------|------|
+| Birds | 🦅 |
+| Lightning | ⚡ |
+| Clouds | ☁️ |
+| UFOs | 🛸 |
+
+Difficulty increases every 100 points — obstacles spawn faster and move quicker.
+
+---
+
+### 👤 User Profile & Achievements
+
+- 📊 Separate stats for voice and gesture modes
 - 🏅 8 unique achievement badges
-- 📊 Separate stats for voice & gesture modes
-- 🏆 High scores and total games played
-- 📈 Progress bars to legend status
+- 🏆 High scores per game mode
+- 📈 Progress bars toward legend status
 
-![Statistics Dashboard](screenshots/stats.png)
+**Achievements:**
+
+| Badge | Requirement |
+|-------|------------|
+| 🎮 Sky Racer | Play your first game |
+| 🎤 Voice Master | Win 5 voice games |
+| ✋ Gesture Pro | Win 5 gesture games |
+| 🏆 High Scorer | Reach 100 points |
+| ⭐ Pro Pilot | Reach 500 points |
+| 👑 Voice Legend | 1000 points in voice mode |
+| 💎 Gesture Legend | 1000 points in gesture mode |
+| ✈️ First Flight | Complete first search |
 
 ---
 
 ## 🛠 Tech Stack
 
-| Category | Technologies |
-|----------|-------------|
-| **Frontend** | React, Tailwind CSS, Canvas API |
-| **Backend** | FastAPI, Motor (Async MongoDB), WebSockets |
-| **AI/ML** | MediaPipe Hand Tracking, Web Speech API |
-| **Database** | MongoDB Atlas, JWT Authentication |
+| Layer | Tech |
+|-------|------|
+| Frontend | React, Tailwind CSS, Canvas API, Vite |
+| Backend | FastAPI, WebSockets, Motor (async MongoDB) |
+| Gesture | OpenCV MOG2 background subtraction |
+| Voice | Web Speech API |
+| Auth | JWT + Google OAuth 2.0 + bcrypt |
+| Database | MongoDB Atlas |
+| Deploy | Docker, Docker Compose |
 
 ---
 
@@ -81,123 +97,146 @@ Track your progress and unlock achievements.
 - Node.js v16+
 - Python 3.8+
 - MongoDB Atlas account
-- Chrome browser
-- Webcam & Microphone
+- Chrome browser (for voice mode)
+- Webcam (for gesture mode)
 
-### Installation & Setup
+---
+
+### Option A — Run with Docker (recommended)
 
 ```bash
-# Clone repository
 git clone https://github.com/harshitayadavv/AeroDeals.git
-cd SkyRacer
+cd AeroDeals
 
-# Backend setup
+# Create backend .env
+cp backend/.env.production.example backend/.env
+# Edit backend/.env with your credentials
+
+# Create frontend .env
+echo "VITE_API_URL=http://localhost:8000" > frontend/.env
+echo "VITE_GOOGLE_CLIENT_ID=your_google_client_id" >> frontend/.env
+
+# Build and run
+docker-compose up --build
+```
+
+- Frontend → http://localhost:3000
+- Backend → http://localhost:8000
+
+---
+
+### Option B — Run locally
+
+**Backend:**
+```bash
+cd backend
 python -m venv venv
-venv\Scripts\activate  # Windows
-# For Mac/Linux: source venv/bin/activate
+
+# Windows
+venv\Scripts\activate
+# Mac/Linux
+source venv/bin/activate
+
 pip install -r requirements.txt
 
-# Create backend .env file
-# Copy and edit with your credentials
+# Create .env (see Environment Variables section below)
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+**Frontend (new terminal):**
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+---
+
+### Environment Variables
+
+**`backend/.env`**
+```env
 MONGODB_URI=your_mongodb_connection_string
 DATABASE_NAME=skyracer
-SECRET_KEY=your_secret_key  # openssl rand -hex 32
+SECRET_KEY=your_secret_key
 GOOGLE_CLIENT_ID=your_google_client_id
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=10080
 ENVIRONMENT=development
-
-# Run backend
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-**In a new terminal:**
-
-```bash
-# Frontend setup
-cd frontend
-npm install
-
-# Create frontend .env file
-# Copy and edit with your credentials
+**`frontend/.env`**
+```env
 VITE_API_URL=http://127.0.0.1:8000
 VITE_GOOGLE_CLIENT_ID=your_google_client_id
-
-# Run frontend
-npm run dev
 ```
 
-**Access the application:**
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:8000
-- API Docs: http://localhost:8000/docs
+> Generate a secret key: `openssl rand -hex 32`
 
 ---
 
-## 🎮 How to Play
+## 📁 Project Structure
 
-### Voice Control
-1. Game Zone → Voice Controlled
-2. Allow microphone access
-3. Speak: "up", "down", "left", "right"
-4. Avoid obstacles and beat your high score!
-
-### Gesture Control
-1. Game Zone → Gesture Controlled
-2. Allow webcam access
-3. Move hand to screen zones:
-   - **Top** → UP
-   - **Bottom** → DOWN
-   - **Left** → LEFT
-   - **Right** → RIGHT
-4. Watch live video feed with hand landmarks!
-
----
-
-## 🏆 Achievements
-
-- 🎮 **Sky Racer** - Play your first game
-- 🎤 **Voice Master** - Win 5 voice games
-- ✋ **Gesture Pro** - Win 5 gesture games
-- 🏆 **High Scorer** - Reach 100 points
-- ⭐ **Pro Pilot** - Reach 500 points
-- 👑 **Voice Legend** - 1000 points in voice mode
-- 💎 **Gesture Legend** - 1000 points in gesture mode
-- ✈️ **First Flight** - Complete first search
-
----
-
-## 🔒 Security Features
-
-- JWT-based authentication
-- Password hashing (bcrypt)
-- Google OAuth 2.0 integration
-- User data isolation in MongoDB
-- Secure WebSocket connections
-- Environment-based configuration
+```
+AeroDeals/
+├── docker-compose.yml
+├── .gitignore
+├── backend/
+│   ├── dockerfile
+│   ├── requirements.txt
+│   ├── main.py
+│   ├── api.py
+│   ├── games/
+│   │   ├── gesture_game.py
+│   │   ├── gesture_websocket.py
+│   │   ├── voice_game.py
+│   │   └── game_websocket.py
+│   └── src/
+│       ├── auth.py
+│       ├── database.py
+│       ├── models.py
+│       └── utils.py
+└── frontend/
+    ├── dockerfile
+    └── src/
+        ├── components/
+        │   ├── GestureGame.jsx
+        │   ├── VoiceGame.jsx
+        │   ├── GameZone.jsx
+        │   ├── Login.jsx
+        │   ├── Signup.jsx
+        │   ├── Navbar.jsx
+        │   ├── Profile.jsx
+        │   └── Tabs.jsx
+        ├── App.jsx
+        └── main.jsx
+```
 
 ---
 
-## 📞 Support
+## 🔒 Security
 
-Having issues?
-1. Check [GitHub Issues](https://github.com/harshitayadavv/AeroDeals/issues)
-2. Review troubleshooting in documentation
+- JWT authentication with expiry
+- Passwords hashed with bcrypt
+- Google OAuth 2.0
+- User data isolated per account in MongoDB
+- Secrets via environment variables (never committed)
 
 ---
 
 ## 🤝 Contributing
 
-Contributions welcome! Please:
 1. Fork the repository
-2. Create a feature branch
-3. Submit a Pull Request
+2. Create a feature branch: `git checkout -b feature/your-feature`
+3. Commit changes: `git commit -m "add your feature"`
+4. Push: `git push origin feature/your-feature`
+5. Open a Pull Request
 
 ---
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE)
+MIT License
 
 ---
 
@@ -208,31 +247,21 @@ GitHub: [@harshitayadavv](https://github.com/harshitayadavv)
 
 ---
 
-## ⭐ Star this repo if you find it helpful!
-
-**Made with ❤️ by Harshita Yadav**
-
----
-
 ## 📊 Project Status
 
 | Feature | Status |
 |---------|--------|
-| Flight Search | ✅ Complete |
 | Voice Game | ✅ Complete |
-| Gesture Game | ✅ Complete |
+| Gesture Game (Swipe) | ✅ Complete |
 | User Profiles | ✅ Complete |
 | Achievements | ✅ Complete |
+| Docker Support | ✅ Complete |
+| Global Leaderboard | 🔜 Coming Soon |
+| Mobile App | 🔜 Coming Soon |
 
-**Latest Release:** v2.0.0 - Gesture Control Support 🎉
+**Latest:** v2.0.0 — Swipe-based gesture control 🎉
 
 ---
 
-## 🚀 Future Enhancements
-
-- Real-time flight API integration
-- Price alerts and notifications
-- Mobile app (React Native)
-- Additional game modes
-- Global leaderboards
-- Multi-language support
+⭐ **Star this repo if you find it helpful!**  
+Made with ❤️ by Harshita Yadav
