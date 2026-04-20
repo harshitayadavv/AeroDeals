@@ -1,18 +1,31 @@
 from datetime import datetime, timedelta
 from typing import Optional
-from jose import JWTError, jwt
-from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from src.models import TokenData, User
 from src.database import Database
-from bson import ObjectId
-from google.auth.transport import requests
-from google.oauth2 import id_token
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
+
+try:
+    from jose import JWTError, jwt
+except ImportError:
+    JWTError = Exception
+    jwt = None
+
+try:
+    from passlib.context import CryptContext
+except ImportError:
+    CryptContext = None
+
+try:
+    from google.auth.transport import requests
+    from google.oauth2 import id_token
+except ImportError:
+    requests = None
+    id_token = None
 
 # Configuration
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this")
@@ -21,21 +34,28 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1008
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 
 # Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto") if CryptContext else None
 
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a plain password against a hashed password"""
+    if pwd_context is None:
+        raise RuntimeError("passlib is not installed")
     return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password: str) -> str:
     """Hash a password"""
+    if pwd_context is None:
+        raise RuntimeError("passlib is not installed")
     return pwd_context.hash(password)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     """Create JWT access token"""
+    if jwt is None:
+        raise RuntimeError("python-jose is not installed")
+
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
@@ -70,6 +90,12 @@ async def authenticate_user(email: str, password: str):
 
 async def verify_google_token(token: str) -> dict:
     """Verify Google OAuth token and return user info"""
+    if id_token is None or requests is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Google auth dependencies are not installed"
+        )
+
     try:
         # Verify the token with Google
         idinfo = id_token.verify_oauth2_token(
@@ -142,6 +168,12 @@ async def get_or_create_google_user(google_user_info: dict) -> User:
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     """Get current authenticated user from JWT token"""
+    if jwt is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication backend is not installed"
+        )
+
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",

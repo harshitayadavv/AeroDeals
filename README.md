@@ -1,8 +1,8 @@
-# ✈️ AeroDeals
+# ✈️ SkyRacer
 
-**Find the best flight deals and play interactive AI-powered games!**
+**Play interactive AI-powered games with voice and gesture control!**
 
-AeroDeals is a full-stack application that combines flight search functionality with innovative voice and gesture-controlled games. Built with React, FastAPI, MongoDB, Web Speech API, and MediaPipe technologies.
+SkyRacer is a full-stack application that features voice and gesture-controlled games. Built with React, FastAPI, MongoDB, Web Speech API, and MediaPipe technologies.
 
 ![Landing Page](screenshots/landing.png)
 
@@ -10,31 +10,9 @@ AeroDeals is a full-stack application that combines flight search functionality 
 
 ## 🚀 Features
 
-### ✈️ Flight Search Module
-
-Search for flights with smart city autocomplete and save your favorite searches.
-
-![Flight Search](screenshots/flight_search.png)
-
-**Key Features:**
-- 🔐 Secure JWT & Google OAuth authentication
-- 🔎 Smart city/airport search with autocomplete
-- 💰 Price analysis (lowest, average, total flights)
-- 📜 Auto-save searches for 7 days
-- ⭐ Bookmark favorite searches permanently
-- 🗄️ MongoDB with user data isolation
-
-> **Note:** Flight data is simulated for demonstration. Production version supports integration with Amadeus, SkyScanner, or custom APIs.
-
-![Search Results](screenshots/search_results.png)
-
----
-
 ### 🎮 Game Zone - Sky Racer
 
 Choose your control method and navigate through obstacles!
-
-![Game Selection](screenshots/game_selection.png)
 
 #### 🎤 Voice Controlled Mode
 
@@ -81,7 +59,6 @@ Track your progress and unlock achievements.
 - 📊 Separate stats for voice & gesture modes
 - 🏆 High scores and total games played
 - 📈 Progress bars to legend status
-- ✈️ Flight search activity tracking
 
 ![Statistics Dashboard](screenshots/stats.png)
 
@@ -112,7 +89,7 @@ Track your progress and unlock achievements.
 ```bash
 # Clone repository
 git clone https://github.com/harshitayadavv/AeroDeals.git
-cd AeroDeals
+cd SkyRacer
 
 # Backend setup
 python -m venv venv
@@ -123,7 +100,7 @@ pip install -r requirements.txt
 # Create backend .env file
 # Copy and edit with your credentials
 MONGODB_URI=your_mongodb_connection_string
-DATABASE_NAME=aerodeals
+DATABASE_NAME=skyracer
 SECRET_KEY=your_secret_key  # openssl rand -hex 32
 GOOGLE_CLIENT_ID=your_google_client_id
 ALGORITHM=HS256

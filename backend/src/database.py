@@ -1,5 +1,5 @@
 import os
-from motor.motor_asyncio import AsyncIOMotorClient
+from typing import Any
 from dotenv import load_dotenv
 import logging
 
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 db = None
 
 class Database:
-    client: AsyncIOMotorClient = None
+    client: Any = None
     
     @classmethod
     async def connect_db(cls):
@@ -18,6 +18,8 @@ class Database:
         global db  # Add this line
         
         try:
+            from motor.motor_asyncio import AsyncIOMotorClient
+
             mongodb_uri = os.getenv("MONGODB_URI")
             
             if not mongodb_uri:
@@ -37,7 +39,7 @@ class Database:
             logger.info("✅ Successfully connected to MongoDB Atlas!")
             
             # Set global db variable for compatibility
-            database_name = os.getenv("DATABASE_NAME", "aerodeals")
+            database_name = os.getenv("DATABASE_NAME", "skyracer")
             db = cls.client[database_name]
             
         except Exception as e:
@@ -57,7 +59,7 @@ class Database:
         if cls.client is None:
             raise RuntimeError("Database not connected. Call connect_db() first.")
         
-        database_name = os.getenv("DATABASE_NAME", "aerodeals")
+        database_name = os.getenv("DATABASE_NAME", "skyracer")
         return cls.client[database_name][collection_name]
 
 

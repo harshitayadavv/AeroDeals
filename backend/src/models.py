@@ -1,7 +1,17 @@
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional
 from datetime import datetime
-from bson import ObjectId
+
+try:
+    from bson import ObjectId
+except ImportError:
+    class ObjectId(str):
+        @classmethod
+        def is_valid(cls, v):
+            return False
+
+        def __str__(self):
+            return str(self)
 
 class PyObjectId(ObjectId):
     @classmethod

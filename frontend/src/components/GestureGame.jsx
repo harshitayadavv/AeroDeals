@@ -23,6 +23,7 @@ function GestureGame({ onBack }) {
   
   const canvasRef = useRef(null);
   const videoRef = useRef(null);
+  const previewVideoRef = useRef(null);
   const wsRef = useRef(null);
   const frameIntervalRef = useRef(null);
   const gameStateRef = useRef(gameState);
@@ -84,7 +85,26 @@ function GestureGame({ onBack }) {
       
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.muted = true;
+        videoRef.current.playsInline = true;
+        videoRef.current.autoplay = true;
+
+        if (previewVideoRef.current) {
+          previewVideoRef.current.srcObject = stream;
+          previewVideoRef.current.muted = true;
+          previewVideoRef.current.playsInline = true;
+          previewVideoRef.current.autoplay = true;
+        }
+        
+        // Wait for metadata/canplay events
+        await new Promise((resolve) => {
+          const onReady = () => resolve();
+          videoRef.current.addEventListener('loadedmetadata', onReady, { once: true });
+          videoRef.current.addEventListener('canplay', onReady, { once: true });
+        });
+        
         await videoRef.current.play();
+        console.log('Webcam initialized:', videoRef.current.videoWidth, videoRef.current.videoHeight);
         setWebcamReady(true);
         setError('');
       }
@@ -104,9 +124,12 @@ function GestureGame({ onBack }) {
         console.log('🛑 Track stopped:', track.kind);
       });
       videoRef.current.srcObject = null;
-      setWebcamReady(false);
-      console.log('✅ Webcam fully stopped');
     }
+    if (previewVideoRef.current && previewVideoRef.current.srcObject) {
+      previewVideoRef.current.srcObject = null;
+    }
+    setWebcamReady(false);
+    console.log('✅ Webcam fully stopped');
   };
 
   // Initialize WebSocket
@@ -129,7 +152,8 @@ function GestureGame({ onBack }) {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to create session');
+        const body = await response.text();
+        throw new Error(`Failed to create session: ${response.status} ${body}`);
       }
 
       const data = await response.json();
@@ -139,6 +163,7 @@ function GestureGame({ onBack }) {
       wsRef.current = ws;
       
       ws.onopen = () => {
+        console.log('WebSocket opened:', wsUrl);
         setIsConnected(true);
         setError('');
         
@@ -179,6 +204,7 @@ function GestureGame({ onBack }) {
           }
           else if (data.type === 'video_frame') {
             // Update processed video frame
+            console.log('📷 video_frame received:', { frame: !!data.frame, hand: data.hand_detected, gesture: data.gesture });
             setProcessedFrame(data.frame);
             setHandDetected(data.hand_detected); // ✅ THIS is where we update hand detection
             setGestureDescription(data.description || '');
@@ -200,9 +226,13 @@ function GestureGame({ onBack }) {
         setError('Connection error');
       };
       
-      ws.onclose = () => {
+      ws.onclose = (event) => {
+        console.warn('WebSocket closed:', event);
         setIsConnected(false);
         stopFrameCapture();
+        if (!gameStateRef.current.gameOver) {
+          setError('Connection closed');
+        }
       };
       
     } catch (err) {
@@ -212,35 +242,83 @@ function GestureGame({ onBack }) {
   };
 
   const startFrameCapture = () => {
-    if (!videoRef.current || !wsRef.current) return;
+    if (!videoRef.current || !wsRef.current) {
+      console.log('startFrameCapture: Missing video or ws', { video: !!videoRef.current, ws: !!wsRef.current });
+      return;
+    }
+    
+    console.log('Starting frame capture at 20 FPS...');
+    let frameCount = 0;
+    let lastFrameTime = Date.now();
     
     frameIntervalRef.current = setInterval(() => {
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-      if (!videoRef.current || videoRef.current.readyState !== videoRef.current.HAVE_ENOUGH_DATA) return;
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      if (!videoRef.current) {
+        return;
+      }
+      
+      const videoReady = videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA && 
+                        videoRef.current.videoWidth > 0 && 
+                        videoRef.current.videoHeight > 0;
+      if (!videoReady) {
+        return;
+      }
       
       try {
         const canvas = document.createElement('canvas');
         canvas.width = videoRef.current.videoWidth;
         canvas.height = videoRef.current.videoHeight;
+        
+        if (canvas.width === 0 || canvas.height === 0) {
+          return;
+        }
+        
         const ctx = canvas.getContext('2d');
         ctx.drawImage(videoRef.current, 0, 0);
         
-        const frameData = canvas.toDataURL('image/jpeg', 0.8);
+        const frameData = canvas.toDataURL('image/jpeg', 0.88);
         
-        wsRef.current.send(JSON.stringify({
-          type: 'frame',
-          frame: frameData
-        }));
+        try {
+          wsRef.current.send(JSON.stringify({
+            type: 'frame',
+            frame: frameData
+          }));
+        } catch (sendError) {
+          console.error('WebSocket send error:', sendError);
+          return;
+        }
+        
+        frameCount++;
+        const currentTime = Date.now();
+        if (currentTime - lastFrameTime >= 1000) {
+          console.log(`Frames per second: ${frameCount}`);
+          frameCount = 0;
+          lastFrameTime = currentTime;
+        }
       } catch (err) {
         console.error('Frame capture error:', err);
       }
-    }, 100);
+    }, 50);  // 50ms = 20 FPS for responsive gesture detection
   };
 
   const stopFrameCapture = () => {
     if (frameIntervalRef.current) {
       clearInterval(frameIntervalRef.current);
       frameIntervalRef.current = null;
+    }
+    
+    // Notify backend that camera is stopping
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      try {
+        wsRef.current.send(JSON.stringify({
+          type: 'stop_camera'
+        }));
+        console.log('Sent stop_camera message to backend');
+      } catch (err) {
+        console.error('Error sending stop_camera:', err);
+      }
     }
   };
 
@@ -529,8 +607,20 @@ function GestureGame({ onBack }) {
           </div>
         )}
 
-        {/* Hidden raw webcam video */}
-        <video ref={videoRef} style={{ display: 'none' }} />
+        {/* Hidden raw webcam video used only for frame capture */}
+        <video
+          ref={videoRef}
+          muted
+          playsInline
+          style={{
+            position: 'absolute',
+            left: '-9999px',
+            width: '1px',
+            height: '1px',
+            opacity: 0,
+            pointerEvents: 'none'
+          }}
+        />
 
         <div className="p-6 bg-gray-950">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -607,8 +697,20 @@ function GestureGame({ onBack }) {
                     className="w-full rounded-lg border-2 border-green-500"
                   />
                 ) : (
-                  <div className="w-full aspect-video bg-gray-700 rounded-lg flex items-center justify-center border-2 border-gray-600">
-                    <p className="text-gray-400">Waiting for video...</p>
+                  <div className="w-full aspect-video bg-gray-700 rounded-lg border-2 border-gray-600 overflow-hidden">
+                    {webcamReady ? (
+                      <video
+                        ref={previewVideoRef}
+                        muted
+                        playsInline
+                        autoPlay
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <p className="text-gray-400">Waiting for camera...</p>
+                      </div>
+                    )}
                   </div>
                 )}
                 <div className="mt-3 space-y-1">

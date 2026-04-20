@@ -1,332 +1,401 @@
 """
-WebSocket handler with RELIABLE gesture detection using hand position
-No more finger counting - uses hand movement and orientation
+Gesture detection — MOG2 swipe (tested, optimized)
+====================================================
+
+PROVEN APPROACH (tested in isolation before shipping):
+  MOG2 background subtractor learns your still hand as background in ~1 sec.
+  The moment you swipe, only the NEW position lights up as ONE clean blob.
+  We track first-blob-position → last-blob-position = swipe vector.
+
+WORKFLOW FOR USER:
+  1. Show hand to camera, hold STILL ~1 sec (MOG2 learns it)
+  2. Swipe in any direction
+  3. Gesture fires immediately when blob travels MIN_SWIPE_PX pixels
+  4. Hold still again briefly → ready for next swipe
+
+STATE MACHINE:
+  IDLE      → no blob visible (hand still, learned as background)
+  TRACKING  → blob appeared (hand moving), recording start+current pos
+  COOLDOWN  → gesture just fired, brief pause before next
+
+KEY BUG FIX vs previous version:
+  Old code reset to IDLE when blob disappeared mid-swipe.
+  New code fires using last_pos when blob disappears, so fast swipes work.
 """
 
 import asyncio
+import base64
 import json
 import logging
-import base64
-import cv2
-import numpy as np
-from fastapi import WebSocket, WebSocketDisconnect
-import mediapipe as mp
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 
+try:
+    import cv2
+    import numpy as np
+    CV2_OK = True
+except ImportError:
+    CV2_OK = False
+
+from fastapi import WebSocket, WebSocketDisconnect
 from games.gesture_game import get_gesture_game, delete_gesture_game
 
 logger = logging.getLogger(__name__)
+_executor = ThreadPoolExecutor(max_workers=2)
 
-# Initialize MediaPipe
-mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(
-    static_image_mode=False,
-    max_num_hands=1,
-    min_detection_confidence=0.7,
-    min_tracking_confidence=0.6
-)
+# ── tunables ───────────────────────────────────────────────────────────────
+MOG2_HISTORY    = 12     # frames to learn background (~0.4s at 30fps)
+MOG2_THRESHOLD  = 50     # background sensitivity — raise if false triggers
+MIN_BLOB_AREA   = 400    # px² — ignore tiny noise
+MIN_SWIPE_PX    = 55     # pixels to travel before gesture fires
+COOLDOWN_SEC    = 0.35   # seconds between gestures
 
-
-def detect_gesture_by_position(hand_landmarks, frame_width, frame_height) -> str:
-    """
-    RELIABLE gesture detection using hand position and shape
-    
-    Gestures:
-    - Hand in TOP half of screen → UP
-    - Hand in BOTTOM half of screen → DOWN
-    - Hand in LEFT half of screen → LEFT  
-    - Hand in RIGHT half of screen → RIGHT
-    
-    Priority: Vertical (up/down) over horizontal (left/right)
-    """
-    
-    # Get center of palm (point 9 = middle of palm)
-    palm_center = hand_landmarks.landmark[9]
-    
-    # Normalize to screen coordinates (0 to 1)
-    palm_x = palm_center.x
-    palm_y = palm_center.y
-    
-    # Calculate distances from center
-    center_x = 0.5
-    center_y = 0.5
-    
-    x_distance = palm_x - center_x  # Negative = left, Positive = right
-    y_distance = palm_y - center_y  # Negative = up, Positive = down
-    
-    # Determine if hand is clearly in a zone (need significant offset)
-    THRESHOLD = 0.15  # 15% from center
-    
-    # Prioritize vertical movement (up/down)
-    if y_distance < -THRESHOLD:
-        return "up"
-    elif y_distance > THRESHOLD:
-        return "down"
-    
-    # Then check horizontal
-    elif x_distance < -THRESHOLD:
-        return "left"
-    elif x_distance > THRESHOLD:
-        return "right"
-    
-    else:
-        return "none"  # Hand near center = neutral
+# ── MediaPipe Tasks API — only used if hand_landmarker.task exists ─────────
+_landmarker = None
+_mp_Image   = None
+_mp_ok      = False
+_mp_tried   = False
 
 
-def get_gesture_description(gesture: str, palm_x: float, palm_y: float) -> str:
-    """Get description of current gesture"""
-    position = f"Hand at ({palm_x:.2f}, {palm_y:.2f})"
-    
-    if gesture == "up":
-        return f"☝️ UP - {position}"
-    elif gesture == "down":
-        return f"👇 DOWN - {position}"
-    elif gesture == "left":
-        return f"👈 LEFT - {position}"
-    elif gesture == "right":
-        return f"👉 RIGHT - {position}"
-    else:
-        return f"✋ CENTER - {position}"
-
-
-def process_frame(frame_data: str):
-    """
-    Process base64 frame and detect gesture
-    Returns: (gesture, processed_frame_base64, hand_detected, description)
-    """
+def _try_init_mediapipe():
+    global _landmarker, _mp_Image, _mp_ok, _mp_tried
+    if _mp_tried:
+        return _mp_ok
+    _mp_tried = True
+    candidates = [
+        os.environ.get("HAND_LANDMARKER_MODEL", ""),
+        "hand_landmarker.task",
+        os.path.join(os.path.dirname(__file__), "hand_landmarker.task"),
+        "/tmp/hand_landmarker.task",
+    ]
+    model_path = next((p for p in candidates if p and os.path.exists(p)), None)
+    if not model_path:
+        return False
     try:
-        # Decode base64 image
-        img_data = base64.b64decode(frame_data.split(',')[1])
-        nparr = np.frombuffer(img_data, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        if frame is None:
-            return "none", None, False, "Frame decode failed"
-        
-        # Flip frame horizontally for mirror effect
-        frame = cv2.flip(frame, 1)
-        
-        frame_height, frame_width = frame.shape[:2]
-        
-        # Convert to RGB for MediaPipe
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
-        # Process with MediaPipe
-        results = hands.process(rgb_frame)
-        
-        gesture = "none"
-        hand_detected = False
-        description = "No hand detected"
-        
-        # Draw zone guides (quadrants)
-        cv2.line(frame, (frame_width//2, 0), (frame_width//2, frame_height), (100, 100, 100), 1)
-        cv2.line(frame, (0, frame_height//2), (frame_width, frame_height//2), (100, 100, 100), 1)
-        
-        # Add zone labels
-        cv2.putText(frame, "UP", (frame_width//2 - 20, 30), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        cv2.putText(frame, "DOWN", (frame_width//2 - 30, frame_height - 10), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        cv2.putText(frame, "LEFT", (10, frame_height//2), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        cv2.putText(frame, "RIGHT", (frame_width - 70, frame_height//2), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        
-        # Detect hand and gesture
-        if results.multi_hand_landmarks:
-            hand_detected = True
-            hand_landmarks = results.multi_hand_landmarks[0]
-            
-            # Detect gesture by hand position
-            gesture = detect_gesture_by_position(hand_landmarks, frame_width, frame_height)
-            
-            # Get palm center for visualization
-            palm_center = hand_landmarks.landmark[9]
-            palm_x = palm_center.x
-            palm_y = palm_center.y
-            
-            description = get_gesture_description(gesture, palm_x, palm_y)
-            
-            # Draw hand landmarks
-            mp.solutions.drawing_utils.draw_landmarks(
-                frame,
-                hand_landmarks,
-                mp_hands.HAND_CONNECTIONS,
-                mp.solutions.drawing_styles.get_default_hand_landmarks_style(),
-                mp.solutions.drawing_styles.get_default_hand_connections_style()
-            )
-            
-            # Draw palm center with large circle
-            palm_pixel_x = int(palm_x * frame_width)
-            palm_pixel_y = int(palm_y * frame_height)
-            cv2.circle(frame, (palm_pixel_x, palm_pixel_y), 15, (0, 255, 0), -1)
-            
-            # Color code by gesture
-            color = (0, 255, 0)  # Green default
-            if gesture == "up":
-                color = (255, 255, 0)  # Cyan
-            elif gesture == "down":
-                color = (0, 165, 255)  # Orange
-            elif gesture == "left":
-                color = (255, 0, 255)  # Magenta
-            elif gesture == "right":
-                color = (255, 255, 0)  # Yellow
-            
-            # Draw gesture text
-            cv2.putText(
-                frame,
-                f"GESTURE: {gesture.upper()}",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1.0,
-                color,
-                3
-            )
-        else:
-            cv2.putText(
-                frame,
-                "SHOW YOUR HAND",
-                (frame_width//2 - 120, frame_height//2),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1.0,
-                (0, 0, 255),
-                2
-            )
-        
-        # Encode processed frame back to base64
-        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        processed_frame = base64.b64encode(buffer).decode('utf-8')
-        processed_frame = f"data:image/jpeg;base64,{processed_frame}"
-        
-        return gesture, processed_frame, hand_detected, description
-        
+        import mediapipe as mp
+        from mediapipe.tasks.python import BaseOptions
+        from mediapipe.tasks.python.vision import HandLandmarker, HandLandmarkerOptions, RunningMode
+        _landmarker = HandLandmarker.create_from_options(
+            HandLandmarkerOptions(
+                base_options=BaseOptions(model_asset_path=model_path),
+                running_mode=RunningMode.IMAGE,
+                num_hands=1,
+                min_hand_detection_confidence=0.5,
+            ))
+        _mp_Image = mp.Image
+        _mp_ok    = True
+        logger.info("MediaPipe HandLandmarker ready")
     except Exception as e:
-        logger.error(f"Frame processing error: {e}")
-        return "none", None, False, f"Error: {str(e)}"
+        logger.info("MediaPipe failed: {} — using MOG2".format(e))
+    return _mp_ok
 
+
+# ── detector ───────────────────────────────────────────────────────────────
+
+IDLE     = "idle"
+TRACKING = "tracking"
+COOLDOWN = "cooldown"
+
+MORPH_K = None   # lazy init after cv2 confirmed available
+
+
+class GestureDetector:
+
+    def __init__(self):
+        self.mog        = None   # init lazily so it's in the executor thread
+        self.state      = IDLE
+        self.start_pos  = None   # (x,y) px where swipe started
+        self.last_pos   = None   # (x,y) px most recent blob position
+        self.cool_until = 0.0
+
+    def _ensure_mog(self):
+        if self.mog is None:
+            self.mog = cv2.createBackgroundSubtractorMOG2(
+                history=MOG2_HISTORY,
+                varThreshold=MOG2_THRESHOLD,
+                detectShadows=False)
+
+    # ── get blob ──────────────────────────────────────────────────────────
+
+    def _blob(self, frame):
+        """Apply MOG2, return centroid (x,y) in pixels or None."""
+        global MORPH_K
+        if MORPH_K is None:
+            MORPH_K = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+
+        self._ensure_mog()
+        mask = self.mog.apply(frame)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  MORPH_K)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, MORPH_K)
+
+        cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not cnts:
+            return None
+
+        c = max(cnts, key=cv2.contourArea)
+        if cv2.contourArea(c) < MIN_BLOB_AREA:
+            return None
+
+        M = cv2.moments(c)
+        if M["m00"] == 0:
+            return None
+
+        return (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
+
+    def _mp_blob(self, frame, fw, fh):
+        """Get palm centroid from MediaPipe."""
+        rgb    = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_img = _mp_Image(image_format=_mp_Image.ImageFormat.SRGB, data=rgb)
+        result = _landmarker.detect(mp_img)
+        if not result.hand_landmarks:
+            return None
+        lm   = result.hand_landmarks[0]
+        palm = lm[9]
+        return (int(palm.x * fw), int(palm.y * fh))
+
+    # ── direction ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _direction(sx, sy, ex, ey):
+        dx, dy = ex - sx, ey - sy
+        if abs(dx) >= abs(dy):
+            return "right" if dx > 0 else "left"
+        return "down" if dy > 0 else "up"
+
+    @staticmethod
+    def _dist(a, b):
+        return ((a[0]-b[0])**2 + (a[1]-b[1])**2) ** 0.5
+
+    # ── update state machine ──────────────────────────────────────────────
+
+    def _update(self, pos, now):
+        """Feed current blob position (or None). Returns gesture or 'none'."""
+
+        if self.state == COOLDOWN:
+            if now >= self.cool_until:
+                self.state    = IDLE
+                self.last_pos = None
+            return "none"
+
+        if self.state == IDLE:
+            if pos is not None:
+                self.state     = TRACKING
+                self.start_pos = pos
+                self.last_pos  = pos
+            return "none"
+
+        # TRACKING
+        if pos is not None:
+            self.last_pos = pos
+        
+        # Check if traveled far enough (use last known pos even if blob gone)
+        if self.last_pos is not None and self.start_pos is not None:
+            dist = self._dist(self.start_pos, self.last_pos)
+            if dist >= MIN_SWIPE_PX:
+                gesture = self._direction(
+                    self.start_pos[0], self.start_pos[1],
+                    self.last_pos[0],  self.last_pos[1])
+                self.state      = COOLDOWN
+                self.cool_until = now + COOLDOWN_SEC
+                self.start_pos  = None
+                logger.info("Swipe {} dist={:.0f}px".format(gesture, dist))
+                return gesture
+
+        if pos is None:
+            # Blob gone but didn't swipe far enough — back to idle
+            self.state     = IDLE
+            self.start_pos = None
+            self.last_pos  = None
+
+        return "none"
+
+    # ── draw ─────────────────────────────────────────────────────────────
+
+    def _draw(self, frame, fw, fh, pos, gesture):
+        f  = cv2.FONT_HERSHEY_SIMPLEX
+        cx, cy = fw // 2, fh // 2
+
+        # Crosshair
+        cv2.line(frame, (cx, 0),  (cx, fh), (40, 40, 40), 1)
+        cv2.line(frame, (0, cy),  (fw, cy), (40, 40, 40), 1)
+
+        # Swipe arrows
+        g = (70, 70, 70)
+        cv2.arrowedLine(frame, (cx, cy-50), (cx, cy-90), g, 2, tipLength=0.35)
+        cv2.arrowedLine(frame, (cx, cy+50), (cx, cy+90), g, 2, tipLength=0.35)
+        cv2.arrowedLine(frame, (cx-50, cy), (cx-90, cy), g, 2, tipLength=0.35)
+        cv2.arrowedLine(frame, (cx+50, cy), (cx+90, cy), g, 2, tipLength=0.35)
+        cv2.putText(frame, "UP",    (cx-12, cy-95), f, 0.4, g, 1)
+        cv2.putText(frame, "DOWN",  (cx-18, cy+108),f, 0.4, g, 1)
+        cv2.putText(frame, "LEFT",  (cx-98, cy+5),  f, 0.4, g, 1)
+        cv2.putText(frame, "RIGHT", (cx+52, cy+5),  f, 0.4, g, 1)
+
+        # State indicator dot top-right
+        dot = {IDLE:(60,60,60), TRACKING:(0,220,80), COOLDOWN:(0,140,220)}
+        cv2.circle(frame, (fw-18, 18), 9, dot.get(self.state,(60,60,60)), -1)
+
+        # Trail line
+        if self.start_pos and self.last_pos and self.state == TRACKING:
+            cv2.line(frame, self.start_pos, self.last_pos, (0, 220, 180), 2)
+            cv2.circle(frame, self.start_pos, 5, (255,255,255), -1)
+
+        # Blob dot
+        if pos:
+            col = {IDLE:(100,100,100), TRACKING:(0,255,80), COOLDOWN:(0,140,220)}
+            cv2.circle(frame, pos, 13, col.get(self.state,(100,100,100)), -1)
+            cv2.circle(frame, pos, 16, (255,255,255), 1)
+
+        # Big gesture flash
+        COLS = {"up":(0,230,230),"down":(0,165,255),
+                "left":(230,50,230),"right":(230,230,0)}
+        if gesture != "none":
+            col = COLS[gesture]
+            cv2.putText(frame, gesture.upper(), (14,52), f, 1.8, (0,0,0), 7)
+            cv2.putText(frame, gesture.upper(), (12,50), f, 1.8, col,      3)
+
+        # Hint
+        hints = {IDLE:    "Hold still, then swipe",
+                 TRACKING: "Swiping...",
+                 COOLDOWN: "Ready..."}
+        cv2.putText(frame, hints.get(self.state,""),
+                    (6, fh-8), f, 0.42, (90,90,90), 1)
+
+    # ── main entry (runs in executor) ─────────────────────────────────────
+
+    def process(self, frame_data):
+        if not CV2_OK:
+            return "none", frame_data, False, "no cv2"
+
+        try:
+            raw   = base64.b64decode(frame_data.split(',')[1])
+            arr   = np.frombuffer(raw, np.uint8)
+            frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        except Exception as e:
+            return "none", frame_data, False, str(e)
+
+        if frame is None:
+            return "none", frame_data, False, "null frame"
+
+        frame  = cv2.flip(frame, 1)
+        fh, fw = frame.shape[:2]
+        now    = time.monotonic()
+
+        # Get blob position
+        if _try_init_mediapipe():
+            pos = self._mp_blob(frame, fw, fh)
+        else:
+            pos = self._blob(frame)
+
+        gesture = self._update(pos, now)
+        self._draw(frame, fw, fh, pos, gesture)
+
+        _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        b64    = "data:image/jpeg;base64," + base64.b64encode(buf).decode()
+        return gesture, b64, pos is not None, "state={} g={}".format(self.state, gesture)
+
+
+# ── WebSocket handler ──────────────────────────────────────────────────────
 
 async def handle_gesture_game_websocket(websocket: WebSocket, session_id: str):
-    """
-    WebSocket handler with position-based gesture detection
-    """
-    
     await websocket.accept()
-    logger.info(f"✋ Gesture WebSocket connected: {session_id}")
-    
-    game = get_gesture_game(session_id)
-    last_gesture = "none"
+    logger.info("WS connected: {}".format(session_id))
+
+    game           = get_gesture_game(session_id)
+    detector       = GestureDetector()
+    loop           = asyncio.get_event_loop()
+    last_gesture   = "none"
     game_loop_task = None
-    gesture_cooldown = {}  # Prevent gesture spam
-    
+    camera_active  = True
+    processing     = False
+
     async def game_update_loop():
-        """Continuous game update loop"""
-        loop_count = 0
+        nonlocal last_gesture
         while True:
             try:
                 if game.game_started and not game.game_over:
                     game.update()
-                    
-                    state = game.get_game_state()
-                    
-                    # Log every 30 frames (once per second at 30fps)
-                    if loop_count % 30 == 0:
-                        logger.info(f"🎮 Game Loop #{loop_count}: Airplane at ({state['airplane']['x']:.1f}, {state['airplane']['y']:.1f}), Obstacles: {len(state['obstacles'])}")
-                    
                     await websocket.send_json({
-                        "type": "game_state",
-                        "state": state,
+                        "type":          "game_state",
+                        "state":         game.get_game_state(),
                         "hand_detected": False,
-                        "gesture": last_gesture
+                        "gesture":       last_gesture,
                     })
-                    
-                    loop_count += 1
-                
-                await asyncio.sleep(0.033)  # ~30 FPS
+                await asyncio.sleep(0.033)
             except Exception as e:
-                logger.error(f"Game loop error: {e}")
+                logger.error("Game loop: {}".format(e))
                 break
-    
+
     try:
         while True:
-            data = await websocket.receive_text()
+            data    = await websocket.receive_text()
             message = json.loads(data)
-            
-            msg_type = message.get("type")
-            
-            if msg_type == "start":
-                logger.info("🎮 GAME START REQUEST")
+            mtype   = message.get("type")
+
+            if mtype == "start":
                 game.start_game()
-                state = game.get_game_state()
-                
-                await websocket.send_json({
-                    "type": "game_started",
-                    "state": state
-                })
-                logger.info("✅ Game started!")
-                
-                # Start game loop
+                camera_active = True
+                await websocket.send_json({"type": "game_started",
+                                           "state": game.get_game_state()})
                 if game_loop_task:
                     game_loop_task.cancel()
                 game_loop_task = asyncio.create_task(game_update_loop())
-                
-            elif msg_type == "frame":
-                # Process video frame for gesture detection
+
+            elif mtype == "frame":
                 frame_data = message.get("frame", "")
-                
-                if frame_data:
-                    gesture, processed_frame, hand_detected, description = process_frame(frame_data)
-                    
-                    # Send processed frame back
-                    if processed_frame:
-                        await websocket.send_json({
-                            "type": "video_frame",
-                            "frame": processed_frame,
-                            "gesture": gesture,
-                            "hand_detected": hand_detected,
-                            "description": description
-                        })
-                    
-                    # Process gesture if game is active
-                    if game.game_started and not game.game_over:
-                        if gesture != "none":
-                            # Always process gesture, even if same (for continuous movement)
-                            game.process_gesture_command(gesture)
-                            if gesture != last_gesture:
-                                logger.info(f"✋ {description}")
-                            last_gesture = gesture
-                        else:
-                            last_gesture = "none"
-            
-            elif msg_type == "stop_camera":
-                logger.info("📹 Camera stop requested")
-                # Just acknowledge - frontend handles camera
+                if not frame_data or not camera_active:
+                    continue
+                if processing:
+                    continue
+                processing = True
+                try:
+                    gesture, processed, detected, desc = await loop.run_in_executor(
+                        _executor, detector.process, frame_data)
+                finally:
+                    processing = False
+
                 await websocket.send_json({
-                    "type": "camera_stopped"
+                    "type":          "video_frame",
+                    "frame":         processed,
+                    "gesture":       gesture,
+                    "hand_detected": detected,
+                    "description":   desc,
                 })
-                
-            elif msg_type == "restart":
-                logger.info("🔄 RESTART GAME")
+
+                if game.game_started and not game.game_over and gesture != "none":
+                    game.process_gesture_command(gesture)
+                    if gesture != last_gesture:
+                        logger.info("Gesture: {}".format(gesture))
+                    last_gesture = gesture
+                else:
+                    last_gesture = "none"
+
+            elif mtype == "stop_camera":
+                camera_active = False
+                await websocket.send_json({"type": "camera_stopped", "status": "success"})
+
+            elif mtype == "resume_camera":
+                camera_active = True
+                await websocket.send_json({"type": "camera_resumed", "status": "success"})
+
+            elif mtype == "restart":
                 game.start_game()
-                await websocket.send_json({
-                    "type": "game_restarted",
-                    "state": game.get_game_state()
-                })
-                
-                # Restart game loop
+                camera_active = True
+                await websocket.send_json({"type": "game_restarted",
+                                           "state": game.get_game_state()})
                 if game_loop_task:
                     game_loop_task.cancel()
                 game_loop_task = asyncio.create_task(game_update_loop())
-            
+
             else:
-                logger.warning(f"Unknown message type: {msg_type}")
-    
+                logger.warning("Unknown: {}".format(mtype))
+
     except WebSocketDisconnect:
-        logger.info(f"👋 WebSocket disconnected: {session_id}")
-    
+        logger.info("WS disconnected: {}".format(session_id))
     except Exception as e:
-        logger.error(f"❌ WebSocket error: {e}")
-    
+        logger.error("WS error: {}".format(e))
     finally:
         if game_loop_task:
             game_loop_task.cancel()
         delete_gesture_game(session_id)
-        logger.info(f"🗑️ Gesture game session cleaned up: {session_id}")
+        logger.info("Session cleaned up: {}".format(session_id))

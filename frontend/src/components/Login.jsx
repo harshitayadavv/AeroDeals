@@ -47,7 +47,7 @@ function Login({ onLoginSuccess, onSwitchToSignup }) {
     <div className="min-h-screen bg-gray-900 flex items-center justify-center p-6">
       <div className="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-md">
         <div className="text-center mb-6">
-          <h1 className="text-4xl font-bold text-blue-400 mb-2">✈️ AeroDeals</h1>
+          <h1 className="text-4xl font-bold text-blue-400 mb-2">✈️ SkyRacer</h1>
           <p className="text-gray-400">Login to your account</p>
         </div>
 

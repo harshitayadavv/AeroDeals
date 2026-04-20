@@ -2,18 +2,12 @@ import { useState, useEffect } from 'react';
 
 function Profile({ currentUser }) {
   const [gameStats, setGameStats] = useState(null);
-  const [flightStats, setFlightStats] = useState({
-    totalSearches: 0,
-    savedSearches: 0,
-  });
   const [isLoadingGame, setIsLoadingGame] = useState(true);
-  const [isLoadingFlight, setIsLoadingFlight] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Load stats on mount and when refreshKey changes
+  // Load game stats on mount and when refreshKey changes
   useEffect(() => {
     loadGameStats();
-    loadFlightStats();
   }, [refreshKey]);
 
   // Auto-refresh stats every 5 seconds
@@ -21,7 +15,6 @@ function Profile({ currentUser }) {
     const interval = setInterval(() => {
       console.log('🔄 Auto-refreshing profile stats...');
       loadGameStats();
-      loadFlightStats();
     }, 5000);
 
     return () => clearInterval(interval);
@@ -61,42 +54,6 @@ function Profile({ currentUser }) {
     }
   };
 
-  const loadFlightStats = async () => {
-    try {
-      setIsLoadingFlight(true);
-      const token = localStorage.getItem('auth_token');
-      if (!token) return;
-
-      const [historyRes, savedRes] = await Promise.all([
-        fetch(`${import.meta.env.VITE_API_URL}/history`, {
-          headers: { 
-            'Authorization': `Bearer ${token}`,
-            'Cache-Control': 'no-cache'
-          }
-        }),
-        fetch(`${import.meta.env.VITE_API_URL}/saved`, {
-          headers: { 
-            'Authorization': `Bearer ${token}`,
-            'Cache-Control': 'no-cache'
-          }
-        })
-      ]);
-
-      if (historyRes.ok && savedRes.ok) {
-        const historyData = await historyRes.json();
-        const savedData = await savedRes.json();
-        
-        setFlightStats({
-          totalSearches: historyData.count || 0,
-          savedSearches: savedData.count || 0,
-        });
-      }
-    } catch (err) {
-      console.error('Error loading flight stats:', err);
-    } finally {
-      setIsLoadingFlight(false);
-    }
-  };
 
   const handleRefresh = () => {
     console.log('🔄 Manual refresh triggered');
@@ -112,14 +69,6 @@ function Profile({ currentUser }) {
   const badges = [
     { 
       id: 1, 
-      name: 'First Flight', 
-      icon: '✈️', 
-      description: 'Completed first flight search', 
-      unlocked: flightStats.totalSearches > 0,
-      category: 'flight'
-    },
-    { 
-      id: 2, 
       name: 'Sky Racer', 
       icon: '🎮', 
       description: 'Played Sky Racer', 
@@ -127,7 +76,7 @@ function Profile({ currentUser }) {
       category: 'game'
     },
     { 
-      id: 3, 
+      id: 2, 
       name: 'Voice Master', 
       icon: '🎤', 
       description: 'Won 5 voice games', 
@@ -135,7 +84,7 @@ function Profile({ currentUser }) {
       category: 'voice'
     },
     { 
-      id: 4, 
+      id: 3, 
       name: 'Gesture Pro', 
       icon: '✋', 
       description: 'Won 5 gesture games', 
@@ -435,33 +384,6 @@ function Profile({ currentUser }) {
           </div>
         </div>
 
-        {/* Flight Search Stats */}
-        <div className="bg-gray-800 rounded-2xl p-6 shadow-xl md:col-span-2">
-          <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-            <span>🔍</span>
-            <span>Flight Search Activity</span>
-          </h2>
-          
-          {isLoadingFlight ? (
-            <div className="text-center py-8 text-gray-400">
-              <div className="animate-spin text-4xl mb-2">⏳</div>
-              <p>Loading flight stats...</p>
-            </div>
-          ) : (
-            <div className="grid md:grid-cols-2 gap-4">
-              <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg p-6 text-center">
-                <p className="text-4xl font-bold mb-2">{flightStats.totalSearches}</p>
-                <p className="text-blue-100">Recent Searches</p>
-                <p className="text-xs text-blue-200 mt-1">(Last 7 days)</p>
-              </div>
-              <div className="bg-gradient-to-br from-purple-600 to-purple-700 rounded-lg p-6 text-center">
-                <p className="text-4xl font-bold mb-2">{flightStats.savedSearches}</p>
-                <p className="text-purple-100">Saved Searches</p>
-                <p className="text-xs text-purple-200 mt-1">(Permanent)</p>
-              </div>
-            </div>
-          )}
-        </div>
       </div>
 
       {/* Account Info */}

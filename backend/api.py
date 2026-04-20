@@ -35,8 +35,8 @@ logger = logging.getLogger(__name__)
 
 # ===== CREATE APP =====
 app = FastAPI(
-    title="AeroDeals API",
-    description="Flight search and AI-powered games",
+    title="SkyRacer API",
+    description="AI-powered voice and gesture games",
     version="2.0.0"
 )
 
@@ -55,21 +55,24 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     """Connect to MongoDB on startup"""
-    await connect_to_mongo()
-    logger.info("✅ Startup complete - MongoDB connected")
+    try:
+        await connect_to_mongo()
+        logger.info("✅ Startup complete - MongoDB connected")
+    except Exception as e:
+        logger.warning(f"⚠️ MongoDB startup skipped: {e}")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Close MongoDB connection on shutdown"""
     await close_mongo_connection()
-    logger.info("👋 AeroDeals API shutdown")
+    logger.info("👋 SkyRacer API shutdown")
 
 
 # ===== HELPER TO GET DB =====
 def get_db():
     """Get database instance"""
-    database_name = os.getenv("DATABASE_NAME", "aerodeals")
+    database_name = os.getenv("DATABASE_NAME", "skyracer")
     return Database.client[database_name]
 
 
@@ -78,9 +81,9 @@ def get_db():
 async def root():
     """API welcome message"""
     return {
-        "message": "Welcome to AeroDeals API",
+        "message": "Welcome to SkyRacer API",
         "version": "2.0.0",
-        "features": ["Flight Search", "Voice Game", "Gesture Game"]
+        "features": ["Voice Game", "Gesture Game"]
     }
 
 
@@ -216,211 +219,6 @@ async def get_me(current_user: User = Depends(get_current_user)):
         "google_id": current_user.google_id,
         "created_at": current_user.created_at
     }
-
-
-# ===== YOUR EXISTING FLIGHT ENDPOINTS GO HERE =====
-
-@app.get("/search")
-async def search_flights(
-    origin: str,
-    destination: str,
-    start_date: str,
-    end_date: str,
-    current_user: User = Depends(get_current_user)
-):
-    """Search flights and save to history"""
-    try:
-        logger.info(f"🔍 Flight search: {origin} → {destination} ({start_date} to {end_date})")
-        
-        from src.flight_scraper import FlightScraper
-        from src.data_processor import process_flights
-        
-        # Search flights
-        scraper = FlightScraper()
-        flights = scraper.find_best_deals(origin, destination, start_date, end_date)
-        
-        if not flights:
-            logger.warning(f"⚠️ No flights found for {origin} → {destination}")
-            return {
-                "origin": origin,
-                "destination": destination,
-                "start_date": start_date,
-                "end_date": end_date,
-                "flights": [],
-                "analysis": {
-                    "min_price": 0,
-                    "max_price": 0,
-                    "avg_price": 0,
-                    "total_flights": 0
-                }
-            }
-        
-        # Process flights data
-        analysis = process_flights(flights)
-        
-        # Save to history
-        db = get_db()
-        search_record = {
-            "user_email": current_user.email,
-            "origin": origin,
-            "destination": destination,
-            "start_date": start_date,
-            "end_date": end_date,
-            "flights": flights,
-            "analysis": analysis,
-            "created_at": datetime.utcnow(),
-            "is_saved": False
-        }
-        
-        result = await db.search_history.insert_one(search_record)
-        search_record["_id"] = str(result.inserted_id)
-        
-        logger.info(f"✅ Found {len(flights)} flights, saved to history")
-        
-        return {
-            "id": str(result.inserted_id),
-            "origin": origin,
-            "destination": destination,
-            "start_date": start_date,
-            "end_date": end_date,
-            "flights": flights[:10],  # Return first 10
-            "analysis": analysis,
-            "total_flights": len(flights)
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Search error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/search/{search_id}")
-async def get_search_details(
-    search_id: str,
-    current_user: User = Depends(get_current_user)
-):
-    """Get detailed flight information for a search"""
-    try:
-        from bson import ObjectId
-        
-        db = get_db()
-        search = await db.search_history.find_one({
-            "_id": ObjectId(search_id),
-            "user_email": current_user.email
-        })
-        
-        if not search:
-            raise HTTPException(status_code=404, detail="Search not found")
-        
-        search["_id"] = str(search["_id"])
-        return search
-        
-    except Exception as e:
-        logger.error(f"Error fetching search details: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/history")
-async def get_search_history(current_user: User = Depends(get_current_user)):
-    """Get user's search history"""
-    try:
-        db = get_db()
-        
-        # Get searches from last 7 days
-        seven_days_ago = datetime.utcnow() - timedelta(days=7)
-        
-        cursor = db.search_history.find({
-            "user_email": current_user.email,
-            "created_at": {"$gte": seven_days_ago},
-            "is_saved": False
-        }).sort("created_at", -1)
-        
-        history = await cursor.to_list(length=100)
-        
-        # Convert ObjectId to string
-        for item in history:
-            item["_id"] = str(item["_id"])
-        
-        return {"history": history, "count": len(history)}
-        
-    except Exception as e:
-        logger.error(f"Error fetching history: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/saved")
-async def get_saved_searches(current_user: User = Depends(get_current_user)):
-    """Get user's saved searches"""
-    try:
-        db = get_db()
-        
-        cursor = db.search_history.find({
-            "user_email": current_user.email,
-            "is_saved": True
-        }).sort("created_at", -1)
-        
-        saved = await cursor.to_list(length=100)
-        
-        for item in saved:
-            item["_id"] = str(item["_id"])
-        
-        return {"saved": saved, "count": len(saved)}
-        
-    except Exception as e:
-        logger.error(f"Error fetching saved: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/save/{search_id}")
-async def save_search(
-    search_id: str,
-    current_user: User = Depends(get_current_user)
-):
-    """Save a search permanently"""
-    try:
-        from bson import ObjectId
-        
-        db = get_db()
-        result = await db.search_history.update_one(
-            {
-                "_id": ObjectId(search_id),
-                "user_email": current_user.email
-            },
-            {"$set": {"is_saved": True}}
-        )
-        
-        if result.modified_count == 0:
-            raise HTTPException(status_code=404, detail="Search not found")
-        
-        return {"success": True, "message": "Search saved"}
-        
-    except Exception as e:
-        logger.error(f"Error saving search: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.delete("/history/{search_id}")
-async def delete_search(
-    search_id: str,
-    current_user: User = Depends(get_current_user)
-):
-    """Delete a search from history"""
-    try:
-        from bson import ObjectId
-        
-        db = get_db()
-        result = await db.search_history.delete_one({
-            "_id": ObjectId(search_id),
-            "user_email": current_user.email
-        })
-        
-        if result.deleted_count == 0:
-            raise HTTPException(status_code=404, detail="Search not found")
-        
-        return {"success": True, "message": "Search deleted"}
-        
-    except Exception as e:
-        logger.error(f"Error deleting search: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ===== GAME ENDPOINTS =====

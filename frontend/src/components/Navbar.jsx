@@ -32,7 +32,7 @@ function Navbar({ activeSection, setActiveSection, currentUser, onLogout }) {
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-2">
               <span className="text-3xl">✈️</span>
-              <span className="text-xl font-bold text-white">AeroDeals</span>
+              <span className="text-xl font-bold text-white">SkyRacer</span>
             </div>
 
             {/* Navigation Items */}
