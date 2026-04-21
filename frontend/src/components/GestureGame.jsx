@@ -1,344 +1,315 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+
+/**
+ * Gesture detection — velocity-based (fixed)
+ * -------------------------------------------
+ * Instead of tracking displacement from a start point,
+ * we track palm VELOCITY over a sliding window of frames.
+ *
+ * Palm positions from last WINDOW_SIZE frames are stored.
+ * Every frame: compute net displacement oldest→newest.
+ * If net displacement exceeds threshold AND is dominant axis → fire.
+ * After firing, enforce cooldown. No "return to center" required.
+ *
+ * This means: just swipe naturally in any direction. Done.
+ */
+
+const WINDOW_SIZE   = 8;      // frames to average over (~130ms at 60fps)
+const MIN_DISP      = 0.09;   // min net displacement (fraction of frame) to fire
+const COOLDOWN_MS   = 400;    // ms between gestures
+
+const MP_WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
+const MP_CDN  = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.js';
+const MP_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+
+// Hand skeleton connections
+const CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [0,9],[9,10],[10,11],[11,12],
+  [0,13],[13,14],[14,15],[15,16],
+  [0,17],[17,18],[18,19],[19,20],
+  [5,9],[9,13],[13,17],
+];
 
 function GestureGame({ onBack }) {
   const [gameState, setGameState] = useState({
     airplane: { x: 100, y: 250, width: 80, height: 35 },
-    obstacles: [],
-    score: 0,
-    gameOver: false,
-    gameStarted: false,
-    gameSpeed: 1.0
+    obstacles: [], score: 0,
+    gameOver: false, gameStarted: false, gameSpeed: 1.0,
   });
-  
-  const [isConnected, setIsConnected] = useState(false);
-  const [handDetected, setHandDetected] = useState(false);
+  const [isConnected,    setIsConnected]    = useState(false);
+  const [handDetected,   setHandDetected]   = useState(false);
   const [currentGesture, setCurrentGesture] = useState('none');
-  const [lastCommand, setLastCommand] = useState('');
-  const [highScore, setHighScore] = useState(0);
-  const [justBeatHigh, setJustBeatHigh] = useState(false);
-  const [error, setError] = useState('');
-  const [webcamReady, setWebcamReady] = useState(false);
-  const [processedFrame, setProcessedFrame] = useState('');
-  const [gestureDescription, setGestureDescription] = useState('');
-  
-  const canvasRef = useRef(null);
-  const videoRef = useRef(null);
-  const previewVideoRef = useRef(null);
-  const wsRef = useRef(null);
-  const frameIntervalRef = useRef(null);
+  const [lastCommand,    setLastCommand]     = useState('');
+  const [highScore,      setHighScore]       = useState(0);
+  const [justBeatHigh,   setJustBeatHigh]   = useState(false);
+  const [error,          setError]          = useState('');
+  const [webcamReady,    setWebcamReady]    = useState(false);
+  const [mpStatus,       setMpStatus]       = useState('loading'); // loading|ready|error
+  const [gestureInfo,    setGestureInfo]    = useState('Loading hand tracking...');
+
+  const canvasRef   = useRef(null);
+  const overlayRef  = useRef(null);
+  const videoRef    = useRef(null);
+  const wsRef       = useRef(null);
   const gameStateRef = useRef(gameState);
+  const landmarkerRef = useRef(null);
+  const rafRef      = useRef(null);
 
-  const CANVAS_WIDTH = 800;
-  const CANVAS_HEIGHT = 500;
+  // Velocity tracking — plain object so updates don't cause re-renders
+  const velRef = useRef({
+    positions: [],      // [{x, y, t}] sliding window
+    lastFiredAt: 0,
+  });
 
+  const CANVAS_W = 800;
+  const CANVAS_H = 500;
+
+  useEffect(() => { gameStateRef.current = gameState; }, [gameState]);
+  useEffect(() => { loadHighScore(); }, []);
   useEffect(() => {
-    gameStateRef.current = gameState;
-  }, [gameState]);
-
-  // Load high score
-  useEffect(() => {
-    loadHighScore();
+    initAll();
+    return cleanup;
   }, []);
 
+  // ── High score ────────────────────────────────────────────────────────────
   const loadHighScore = async () => {
     try {
       const token = localStorage.getItem('auth_token');
-      
-      if (!token) {
-        setHighScore(0);
-        return;
-      }
-      
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/games/stats`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+      if (!token) return;
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/games/stats`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.stats && data.stats.gesture) {
-          setHighScore(data.stats.gesture.high_score || 0);
-        }
+      if (res.ok) {
+        const d = await res.json();
+        setHighScore(d.stats?.gesture?.high_score || 0);
       }
-    } catch (err) {
-      console.error('High score load error:', err);
+    } catch(e) {}
+  };
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  const initAll = async () => {
+    await initMediaPipe();
+  };
+
+  const cleanup = () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    stopWebcam();
+    landmarkerRef.current?.close();
+    wsRef.current?.close();
+  };
+
+  const initMediaPipe = async () => {
+    setMpStatus('loading');
+    try {
+      const { HandLandmarker, FilesetResolver } = await import(MP_CDN);
+      const vision = await FilesetResolver.forVisionTasks(MP_WASM);
+      landmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: MP_MODEL, delegate: 'GPU' },
+        runningMode: 'VIDEO',
+        numHands: 1,
+        minHandDetectionConfidence: 0.6,
+        minHandPresenceConfidence: 0.6,
+        minTrackingConfidence: 0.5,
+      });
+      setMpStatus('ready');
+      setGestureInfo('Hand tracking ready — show your hand!');
+      await initWebcam();
+    } catch(e) {
+      console.error('MediaPipe error:', e);
+      setMpStatus('error');
+      setError('❌ Hand tracking failed to load. Please refresh.');
     }
   };
 
-  // Initialize webcam
-  useEffect(() => {
-    initWebcam();
-    return () => {
-      console.log('🧹 Component unmounting - cleaning up webcam');
-      stopWebcam();
-    };
-  }, []);
-
   const initWebcam = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          width: 640, 
-          height: 480,
-          facingMode: 'user'
-        } 
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480, facingMode: 'user' },
       });
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.muted = true;
-        videoRef.current.playsInline = true;
-        videoRef.current.autoplay = true;
-
-        if (previewVideoRef.current) {
-          previewVideoRef.current.srcObject = stream;
-          previewVideoRef.current.muted = true;
-          previewVideoRef.current.playsInline = true;
-          previewVideoRef.current.autoplay = true;
-        }
-        
-        // Wait for metadata/canplay events
-        await new Promise((resolve) => {
-          const onReady = () => resolve();
-          videoRef.current.addEventListener('loadedmetadata', onReady, { once: true });
-          videoRef.current.addEventListener('canplay', onReady, { once: true });
-        });
-        
-        await videoRef.current.play();
-        console.log('Webcam initialized:', videoRef.current.videoWidth, videoRef.current.videoHeight);
-        setWebcamReady(true);
-        setError('');
-      }
-    } catch (err) {
-      console.error('Webcam error:', err);
-      setError('🎥 Camera access denied! Please allow camera permissions.');
-      setWebcamReady(false);
+      videoRef.current.srcObject = stream;
+      videoRef.current.muted = true;
+      videoRef.current.playsInline = true;
+      await new Promise(r => { videoRef.current.onloadedmetadata = r; });
+      await videoRef.current.play();
+      setWebcamReady(true);
+      startLoop();
+    } catch(e) {
+      setError('🎥 Camera access denied. Please allow camera permissions.');
     }
   };
 
   const stopWebcam = () => {
-    console.log('📹 Stopping webcam...');
-    if (videoRef.current && videoRef.current.srcObject) {
-      const tracks = videoRef.current.srcObject.getTracks();
-      tracks.forEach(track => {
-        track.stop();
-        console.log('🛑 Track stopped:', track.kind);
-      });
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    if (videoRef.current?.srcObject) {
+      videoRef.current.srcObject.getTracks().forEach(t => t.stop());
       videoRef.current.srcObject = null;
     }
-    if (previewVideoRef.current && previewVideoRef.current.srcObject) {
-      previewVideoRef.current.srcObject = null;
-    }
     setWebcamReady(false);
-    console.log('✅ Webcam fully stopped');
   };
 
-  // Initialize WebSocket
+  // ── Detection loop ────────────────────────────────────────────────────────
+  const startLoop = useCallback(() => {
+    const loop = (nowMs) => {
+      rafRef.current = requestAnimationFrame(loop);
+      const video = videoRef.current;
+      if (!video || video.readyState < 2 || !landmarkerRef.current) return;
+
+      let results;
+      try { results = landmarkerRef.current.detectForVideo(video, nowMs); }
+      catch(e) { return; }
+
+      // Draw landmarks on overlay
+      const overlay = overlayRef.current;
+      if (overlay) {
+        overlay.width  = video.videoWidth;
+        overlay.height = video.videoHeight;
+        const ctx = overlay.getContext('2d');
+        ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+        if (results.landmarks?.length > 0) {
+          setHandDetected(true);
+          const lm = results.landmarks[0];
+          drawHand(ctx, lm, overlay.width, overlay.height);
+          // Use palm center (landmark 9) for tracking
+          const palm = lm[9];
+          detectGesture(palm.x, palm.y, nowMs);
+        } else {
+          setHandDetected(false);
+          velRef.current.positions = [];   // clear history when hand gone
+          setCurrentGesture('none');
+          setGestureInfo('Show your hand...');
+        }
+      }
+    };
+    rafRef.current = requestAnimationFrame(loop);
+  }, []);
+
+  // ── Velocity-based gesture detection ──────────────────────────────────────
+  const detectGesture = (nx, ny, nowMs) => {
+    const v = velRef.current;
+
+    // Add to sliding window
+    v.positions.push({ x: nx, y: ny, t: nowMs });
+    if (v.positions.length > WINDOW_SIZE) v.positions.shift();
+    if (v.positions.length < 4) return;   // need enough frames
+
+    // Net displacement: newest - oldest in window
+    const oldest = v.positions[0];
+    const newest = v.positions[v.positions.length - 1];
+    const dx = newest.x - oldest.x;
+    const dy = newest.y - oldest.y;
+    const adx = Math.abs(dx);
+    const ady = Math.abs(dy);
+
+    // Not moved enough
+    if (adx < MIN_DISP && ady < MIN_DISP) {
+      setGestureInfo(`Palm at (${nx.toFixed(2)}, ${ny.toFixed(2)})`);
+      return;
+    }
+
+    // Cooldown check
+    if (nowMs - v.lastFiredAt < COOLDOWN_MS) return;
+
+    // Dominant axis wins
+    let gesture;
+    if (adx >= ady) {
+      gesture = dx > 0 ? 'right' : 'left';
+    } else {
+      gesture = dy > 0 ? 'down' : 'up';
+    }
+
+    // Fire!
+    v.lastFiredAt = nowMs;
+    v.positions   = [];   // reset window so next swipe starts fresh
+
+    setCurrentGesture(gesture);
+    setLastCommand(gesture);
+    setGestureInfo(`✅ ${gesture.toUpperCase()} detected!`);
+    setTimeout(() => setLastCommand(''), 500);
+
+    // Send to backend
+    if (wsRef.current?.readyState === WebSocket.OPEN &&
+        gameStateRef.current.gameStarted &&
+        !gameStateRef.current.gameOver) {
+      wsRef.current.send(JSON.stringify({ type: 'gesture', direction: gesture }));
+    }
+  };
+
+  // ── Draw hand skeleton ────────────────────────────────────────────────────
+  const drawHand = (ctx, lm, w, h) => {
+    ctx.strokeStyle = 'rgba(100,255,160,0.85)';
+    ctx.lineWidth   = 2;
+    CONNECTIONS.forEach(([a, b]) => {
+      ctx.beginPath();
+      ctx.moveTo(lm[a].x * w, lm[a].y * h);
+      ctx.lineTo(lm[b].x * w, lm[b].y * h);
+      ctx.stroke();
+    });
+    lm.forEach((p, i) => {
+      ctx.beginPath();
+      ctx.arc(p.x * w, p.y * h, i === 9 ? 9 : 4, 0, Math.PI * 2);
+      ctx.fillStyle = i === 9 ? '#00ffcc' : 'rgba(100,255,160,0.9)';
+      ctx.fill();
+    });
+  };
+
+  // ── WebSocket ─────────────────────────────────────────────────────────────
   const initWebSocket = async () => {
     try {
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-      }
-      
+      wsRef.current?.close();
       const token = localStorage.getItem('auth_token');
-      if (!token) {
-        setError('❌ Not logged in');
-        return;
-      }
+      if (!token) { setError('❌ Not logged in'); return; }
 
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/games/gesture/session`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/games/gesture/session`,
+        { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) throw new Error('Session failed');
 
-      if (!response.ok) {
-        const body = await response.text();
-        throw new Error(`Failed to create session: ${response.status} ${body}`);
-      }
-
-      const data = await response.json();
-      const wsUrl = `${import.meta.env.VITE_API_URL.replace('http', 'ws')}${data.websocket_url}`;
-      
-      const ws = new WebSocket(wsUrl);
+      const { websocket_url } = await res.json();
+      const wsUrl = `${import.meta.env.VITE_API_URL.replace('http','ws')}${websocket_url}`;
+      const ws    = new WebSocket(wsUrl);
       wsRef.current = ws;
-      
+
       ws.onopen = () => {
-        console.log('WebSocket opened:', wsUrl);
         setIsConnected(true);
         setError('');
-        
         ws.send(JSON.stringify({ type: 'start' }));
-        startFrameCapture();
       };
-      
-      ws.onmessage = (event) => {
+
+      ws.onmessage = ({ data }) => {
         try {
-          const data = JSON.parse(event.data);
-          
-          if (data.type === 'game_started') {
-            console.log('🎮 GAME STARTED:', data);
-            if (data.state) {
-              console.log('✅ Setting initial game state:', data.state);
-              setGameState(data.state);
+          const msg = JSON.parse(data);
+          if (msg.type === 'game_started' && msg.state) {
+            setGameState(msg.state);
+          } else if (msg.type === 'game_state') {
+            setGameState(msg.state);
+            if (msg.state.gameOver && !gameStateRef.current.gameOver) {
+              submitScore(msg.state.score);
             }
           }
-          else if (data.type === 'game_state') {
-            // Update game state from server
-            console.log('🔄 Game state update:', data.state.airplane.x, data.state.airplane.y);
-            setGameState(data.state);
-            // DON'T update handDetected here - it comes from video_frame
-            
-            const gesture = data.gesture;
-            if (gesture && gesture !== 'none') {
-              setCurrentGesture(gesture);
-              setLastCommand(gesture);
-              setTimeout(() => setLastCommand(''), 800);
-            } else {
-              setCurrentGesture('none');
-            }
-            
-            if (data.state.gameOver && !gameStateRef.current.gameOver) {
-              submitScore(data.state.score);
-              stopFrameCapture();
-            }
-          }
-          else if (data.type === 'video_frame') {
-            // Update processed video frame
-            console.log('📷 video_frame received:', { frame: !!data.frame, hand: data.hand_detected, gesture: data.gesture });
-            setProcessedFrame(data.frame);
-            setHandDetected(data.hand_detected); // ✅ THIS is where we update hand detection
-            setGestureDescription(data.description || '');
-            
-            const gesture = data.gesture;
-            if (gesture && gesture !== 'none') {
-              setCurrentGesture(gesture);
-            } else {
-              setCurrentGesture('none');
-            }
-          }
-        } catch (err) {
-          console.error('Parse error:', err);
-        }
+        } catch(e) {}
       };
-      
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setError('Connection error');
-      };
-      
-      ws.onclose = (event) => {
-        console.warn('WebSocket closed:', event);
-        setIsConnected(false);
-        stopFrameCapture();
-        if (!gameStateRef.current.gameOver) {
-          setError('Connection closed');
-        }
-      };
-      
-    } catch (err) {
-      console.error('WebSocket init error:', err);
+
+      ws.onerror  = () => setError('Connection error');
+      ws.onclose  = () => setIsConnected(false);
+    } catch(e) {
       setError('Failed to connect to server');
     }
   };
 
-  const startFrameCapture = () => {
-    if (!videoRef.current || !wsRef.current) {
-      console.log('startFrameCapture: Missing video or ws', { video: !!videoRef.current, ws: !!wsRef.current });
-      return;
-    }
-    
-    console.log('Starting frame capture at 20 FPS...');
-    let frameCount = 0;
-    let lastFrameTime = Date.now();
-    
-    frameIntervalRef.current = setInterval(() => {
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        return;
-      }
-      if (!videoRef.current) {
-        return;
-      }
-      
-      const videoReady = videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA && 
-                        videoRef.current.videoWidth > 0 && 
-                        videoRef.current.videoHeight > 0;
-      if (!videoReady) {
-        return;
-      }
-      
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = videoRef.current.videoWidth;
-        canvas.height = videoRef.current.videoHeight;
-        
-        if (canvas.width === 0 || canvas.height === 0) {
-          return;
-        }
-        
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(videoRef.current, 0, 0);
-        
-        const frameData = canvas.toDataURL('image/jpeg', 0.88);
-        
-        try {
-          wsRef.current.send(JSON.stringify({
-            type: 'frame',
-            frame: frameData
-          }));
-        } catch (sendError) {
-          console.error('WebSocket send error:', sendError);
-          return;
-        }
-        
-        frameCount++;
-        const currentTime = Date.now();
-        if (currentTime - lastFrameTime >= 1000) {
-          console.log(`Frames per second: ${frameCount}`);
-          frameCount = 0;
-          lastFrameTime = currentTime;
-        }
-      } catch (err) {
-        console.error('Frame capture error:', err);
-      }
-    }, 50);  // 50ms = 20 FPS for responsive gesture detection
-  };
-
-  const stopFrameCapture = () => {
-    if (frameIntervalRef.current) {
-      clearInterval(frameIntervalRef.current);
-      frameIntervalRef.current = null;
-    }
-    
-    // Notify backend that camera is stopping
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      try {
-        wsRef.current.send(JSON.stringify({
-          type: 'stop_camera'
-        }));
-        console.log('Sent stop_camera message to backend');
-      } catch (err) {
-        console.error('Error sending stop_camera:', err);
-      }
-    }
-  };
-
+  // ── Start game ────────────────────────────────────────────────────────────
   const startGame = () => {
-    if (!webcamReady) {
-      setError('⚠️ Waiting for camera...');
-      return;
-    }
-    
+    if (!webcamReady || mpStatus !== 'ready') return;
+    velRef.current = { positions: [], lastFiredAt: 0 };
     setGameState({
       airplane: { x: 100, y: 250, width: 80, height: 35 },
-      obstacles: [],
-      score: 0,
-      gameOver: false,
-      gameStarted: true,
-      gameSpeed: 1.0
+      obstacles: [], score: 0,
+      gameOver: false, gameStarted: true, gameSpeed: 1.0,
     });
-    setError('');
-    setJustBeatHigh(false);
-    
+    setError(''); setJustBeatHigh(false);
     initWebSocket();
   };
 
@@ -346,441 +317,237 @@ function GestureGame({ onBack }) {
     try {
       const token = localStorage.getItem('auth_token');
       if (!token) return;
-
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/games/score`, {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/games/score`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ game_type: 'gesture', score })
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ game_type: 'gesture', score }),
       });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setHighScore(data.high_score || 0);
-        setJustBeatHigh(!!data.is_high_score);
+      if (res.ok) {
+        const d = await res.json();
+        setHighScore(d.high_score || 0);
+        setJustBeatHigh(!!d.is_high_score);
       }
-    } catch (err) {
-      console.error('Submit error:', err);
-    }
+    } catch(e) {}
   };
 
-  // Canvas rendering
+  // ── Canvas render ─────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!canvasRef.current) return;
-
     const canvas = canvasRef.current;
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
 
-    console.log('🎨 Rendering canvas - Airplane at:', gameState.airplane.x, gameState.airplane.y);
-
     // Sky gradient
-    const skyGradient = ctx.createLinearGradient(0, 0, 0, CANVAS_HEIGHT);
-    skyGradient.addColorStop(0, '#0f172a');
-    skyGradient.addColorStop(0.5, '#1e40af');
-    skyGradient.addColorStop(1, '#38bdf8');
-    ctx.fillStyle = skyGradient;
-    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    const sky = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+    sky.addColorStop(0, '#0f172a'); sky.addColorStop(0.5, '#1e40af'); sky.addColorStop(1, '#38bdf8');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
-    // Animated clouds
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+    // Clouds
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
     for (let i = 0; i < 6; i++) {
-      const x = ((i * 180 + Date.now() * 0.015) % (CANVAS_WIDTH + 150)) - 75;
-      const y = 60 + i * 25;
+      const x = ((i * 180 + Date.now() * 0.012) % (CANVAS_W + 150)) - 75;
+      const y = 50 + i * 28;
       ctx.beginPath();
-      ctx.arc(x, y, 22, 0, Math.PI * 2);
-      ctx.arc(x + 25, y - 5, 28, 0, Math.PI * 2);
-      ctx.arc(x + 50, y, 22, 0, Math.PI * 2);
+      ctx.arc(x, y, 20, 0, Math.PI*2); ctx.arc(x+24, y-5, 26, 0, Math.PI*2); ctx.arc(x+48, y, 20, 0, Math.PI*2);
       ctx.fill();
     }
 
-    // Draw airplane
-    const { airplane } = gameState;
-    const px = airplane.x;
-    const py = airplane.y;
-    
+    // Airplane
+    const { airplane: a } = gameState;
     ctx.save();
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
-    ctx.shadowBlur = 15;
-    ctx.shadowOffsetX = 5;
-    ctx.shadowOffsetY = 5;
-    
-    const fuselageGradient = ctx.createLinearGradient(px, py, px, py + 35);
-    fuselageGradient.addColorStop(0, '#e5e7eb');
-    fuselageGradient.addColorStop(0.5, '#9ca3af');
-    fuselageGradient.addColorStop(1, '#6b7280');
-    ctx.fillStyle = fuselageGradient;
-    ctx.beginPath();
-    ctx.ellipse(px + 40, py + 17, 38, 16, 0, 0, Math.PI * 2);
-    ctx.fill();
-    
-    const windowGradient = ctx.createRadialGradient(px + 58, py + 12, 2, px + 58, py + 12, 12);
-    windowGradient.addColorStop(0, '#93c5fd');
-    windowGradient.addColorStop(0.7, '#3b82f6');
-    windowGradient.addColorStop(1, '#1e40af');
-    ctx.fillStyle = windowGradient;
-    ctx.beginPath();
-    ctx.ellipse(px + 58, py + 15, 12, 8, 0, 0, Math.PI * 2);
-    ctx.fill();
-    
-    const wingGradient = ctx.createLinearGradient(px - 5, py, px - 5, py + 15);
-    wingGradient.addColorStop(0, '#ef4444');
-    wingGradient.addColorStop(0.6, '#dc2626');
-    wingGradient.addColorStop(1, '#991b1b');
-    ctx.fillStyle = wingGradient;
-    ctx.beginPath();
-    ctx.moveTo(px + 25, py + 17);
-    ctx.lineTo(px - 8, py - 2);
-    ctx.lineTo(px - 2, py + 10);
-    ctx.lineTo(px + 5, py + 17);
-    ctx.closePath();
-    ctx.fill();
-    
+    ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowBlur = 12;
+    const fg = ctx.createLinearGradient(a.x, a.y, a.x, a.y+35);
+    fg.addColorStop(0,'#e5e7eb'); fg.addColorStop(0.5,'#9ca3af'); fg.addColorStop(1,'#6b7280');
+    ctx.fillStyle = fg;
+    ctx.beginPath(); ctx.ellipse(a.x+40, a.y+17, 38, 16, 0, 0, Math.PI*2); ctx.fill();
+    const wg = ctx.createLinearGradient(a.x-5, a.y, a.x-5, a.y+15);
+    wg.addColorStop(0,'#ef4444'); wg.addColorStop(1,'#991b1b');
+    ctx.fillStyle = wg;
+    ctx.beginPath(); ctx.moveTo(a.x+25,a.y+17); ctx.lineTo(a.x-8,a.y-2); ctx.lineTo(a.x-2,a.y+10); ctx.lineTo(a.x+5,a.y+17); ctx.closePath(); ctx.fill();
     ctx.restore();
 
-    // Draw obstacles
+    // Obstacles
     gameState.obstacles.forEach(obs => {
       if (obs.type === 'bird') {
-        const wingFlap = Math.sin(Date.now() * 0.015 + obs.id) * 6;
+        const f = Math.sin(Date.now()*0.015+obs.id)*6;
         ctx.fillStyle = '#78350f';
-        ctx.beginPath();
-        ctx.ellipse(obs.x + 25, obs.y + 20, 14, 10, 0, 0, Math.PI * 2);
-        ctx.fill();
-        
+        ctx.beginPath(); ctx.ellipse(obs.x+25,obs.y+20,14,10,0,0,Math.PI*2); ctx.fill();
         ctx.fillStyle = '#92400e';
-        ctx.beginPath();
-        ctx.ellipse(obs.x + 8, obs.y + 18 + wingFlap, 18, 7, -0.4, 0, Math.PI * 2);
-        ctx.ellipse(obs.x + 42, obs.y + 18 + wingFlap, 18, 7, 0.4, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.ellipse(obs.x+8,obs.y+18+f,18,7,-0.4,0,Math.PI*2); ctx.ellipse(obs.x+42,obs.y+18+f,18,7,0.4,0,Math.PI*2); ctx.fill();
       } else if (obs.type === 'cloud') {
         ctx.fillStyle = '#94a3b8';
-        ctx.beginPath();
-        ctx.arc(obs.x + 12, obs.y + 20, 15, 0, Math.PI * 2);
-        ctx.arc(obs.x + 28, obs.y + 14, 18, 0, Math.PI * 2);
-        ctx.arc(obs.x + 42, obs.y + 20, 15, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(obs.x+12,obs.y+20,15,0,Math.PI*2); ctx.arc(obs.x+28,obs.y+14,18,0,Math.PI*2); ctx.arc(obs.x+42,obs.y+20,15,0,Math.PI*2); ctx.fill();
       } else if (obs.type === 'thunder') {
-        // Lightning bolt
-        const gradient = ctx.createLinearGradient(obs.x, obs.y, obs.x, obs.y + obs.height);
-        gradient.addColorStop(0, '#fef08a');
-        gradient.addColorStop(0.5, '#fbbf24');
-        gradient.addColorStop(1, '#f59e0b');
-        ctx.fillStyle = gradient;
-        
-        ctx.beginPath();
-        ctx.moveTo(obs.x + 15, obs.y);
-        ctx.lineTo(obs.x + 22, obs.y + 25);
-        ctx.lineTo(obs.x + 12, obs.y + 25);
-        ctx.lineTo(obs.x + 18, obs.y + 45);
-        ctx.lineTo(obs.x + 10, obs.y + 45);
-        ctx.lineTo(obs.x + 15, obs.y + 70);
-        ctx.lineTo(obs.x + 8, obs.y + 40);
-        ctx.lineTo(obs.x + 16, obs.y + 40);
-        ctx.lineTo(obs.x + 10, obs.y + 20);
-        ctx.lineTo(obs.x + 15, obs.y);
-        ctx.fill();
-        
-        ctx.shadowColor = '#fbbf24';
-        ctx.shadowBlur = 15;
-        ctx.fill();
-        ctx.shadowBlur = 0;
+        const g = ctx.createLinearGradient(obs.x,obs.y,obs.x,obs.y+obs.height);
+        g.addColorStop(0,'#fef08a'); g.addColorStop(0.5,'#fbbf24'); g.addColorStop(1,'#f59e0b');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.moveTo(obs.x+15,obs.y); ctx.lineTo(obs.x+22,obs.y+25); ctx.lineTo(obs.x+12,obs.y+25); ctx.lineTo(obs.x+18,obs.y+45); ctx.lineTo(obs.x+10,obs.y+45); ctx.lineTo(obs.x+15,obs.y+70); ctx.lineTo(obs.x+8,obs.y+40); ctx.lineTo(obs.x+16,obs.y+40); ctx.lineTo(obs.x+10,obs.y+20); ctx.closePath(); ctx.fill();
       } else if (obs.type === 'ufo') {
-        // UFO saucer
-        ctx.save();
-        
-        // Bottom disc
         ctx.fillStyle = '#6366f1';
-        ctx.beginPath();
-        ctx.ellipse(obs.x + 25, obs.y + 20, 24, 10, 0, 0, Math.PI * 2);
-        ctx.fill();
-        
-        // Top dome
-        const domeGradient = ctx.createRadialGradient(obs.x + 25, obs.y + 15, 5, obs.x + 25, obs.y + 15, 15);
-        domeGradient.addColorStop(0, '#a5b4fc');
-        domeGradient.addColorStop(1, '#818cf8');
-        ctx.fillStyle = domeGradient;
-        ctx.beginPath();
-        ctx.arc(obs.x + 25, obs.y + 14, 14, 0, Math.PI, true);
-        ctx.fill();
-        
-        // Lights
-        const colors = ['#ef4444', '#22c55e', '#3b82f6', '#fbbf24'];
-        for (let i = 0; i < 4; i++) {
-          ctx.fillStyle = colors[i];
-          ctx.shadowColor = colors[i];
-          ctx.shadowBlur = 8;
-          ctx.beginPath();
-          ctx.arc(obs.x + 10 + i * 10, obs.y + 24, 3, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.shadowBlur = 0;
-        
-        ctx.restore();
+        ctx.beginPath(); ctx.ellipse(obs.x+25,obs.y+20,24,10,0,0,Math.PI*2); ctx.fill();
+        const dg = ctx.createRadialGradient(obs.x+25,obs.y+15,5,obs.x+25,obs.y+15,15);
+        dg.addColorStop(0,'#a5b4fc'); dg.addColorStop(1,'#818cf8');
+        ctx.fillStyle = dg;
+        ctx.beginPath(); ctx.arc(obs.x+25,obs.y+14,14,0,Math.PI,true); ctx.fill();
+        ['#ef4444','#22c55e','#3b82f6','#fbbf24'].forEach((c,i)=>{
+          ctx.fillStyle=c; ctx.shadowColor=c; ctx.shadowBlur=8;
+          ctx.beginPath(); ctx.arc(obs.x+10+i*10,obs.y+24,3,0,Math.PI*2); ctx.fill();
+        });
+        ctx.shadowBlur=0;
       }
     });
 
-    // UI
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-    ctx.fillRect(10, 10, 220, 120);
-    ctx.strokeStyle = '#3b82f6';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(10, 10, 220, 120);
-    
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 32px Arial';
-    ctx.fillText(gameState.score, 25, 50);
-    ctx.font = '14px Arial';
-    ctx.fillStyle = '#94a3b8';
-    ctx.fillText('SCORE', 25, 70);
-    
-    ctx.fillStyle = '#fbbf24';
-    ctx.font = 'bold 24px Arial';
-    ctx.fillText(String(highScore), 25, 100);
-    ctx.font = '12px Arial';
-    ctx.fillStyle = '#94a3b8';
-    ctx.fillText('HIGH SCORE', 25, 115);
-    
-    ctx.fillStyle = 'rgba(16, 185, 129, 0.9)';
-    ctx.fillRect(CANVAS_WIDTH - 160, 15, 145, 35);
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 18px Arial';
-    ctx.fillText(`⚡ ${(gameState.gameSpeed || 1.0).toFixed(1)}x`, CANVAS_WIDTH - 150, 40);
+    // HUD
+    ctx.fillStyle = 'rgba(15,23,42,0.85)'; ctx.fillRect(10,10,220,120);
+    ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2; ctx.strokeRect(10,10,220,120);
+    ctx.fillStyle='#fff'; ctx.font='bold 32px Arial'; ctx.fillText(gameState.score,25,50);
+    ctx.font='14px Arial'; ctx.fillStyle='#94a3b8'; ctx.fillText('SCORE',25,70);
+    ctx.fillStyle='#fbbf24'; ctx.font='bold 24px Arial'; ctx.fillText(String(highScore),25,100);
+    ctx.font='12px Arial'; ctx.fillStyle='#94a3b8'; ctx.fillText('HIGH SCORE',25,115);
+    ctx.fillStyle='rgba(16,185,129,0.9)'; ctx.fillRect(CANVAS_W-160,15,145,35);
+    ctx.fillStyle='#fff'; ctx.font='bold 18px Arial'; ctx.fillText(`⚡ ${(gameState.gameSpeed||1).toFixed(1)}x`,CANVAS_W-150,40);
   }, [gameState, highScore]);
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  const COLS = { up:'from-cyan-500 to-blue-500', down:'from-orange-500 to-red-500', left:'from-purple-500 to-pink-500', right:'from-green-500 to-emerald-500' };
+  const ready = webcamReady && mpStatus === 'ready';
 
   return (
     <div className="max-w-7xl mx-auto">
       <div className="flex items-center justify-between mb-6">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-all"
-        >
-          <span>←</span>
-          <span>Back to Game Zone</span>
+        <button onClick={onBack} className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-all">
+          ← Back to Game Zone
         </button>
-        
+        <div className="flex items-center gap-3 text-sm">
+          {mpStatus === 'loading' && <span className="text-yellow-400 animate-pulse">⏳ Loading hand tracking...</span>}
+          {mpStatus === 'ready'   && <span className="text-green-400">✅ Hand tracking ready</span>}
+          {mpStatus === 'error'   && <span className="text-red-400">❌ Hand tracking failed</span>}
+        </div>
         {webcamReady && (
-          <button
-            onClick={() => {
-              console.log('🛑 MANUAL STOP clicked');
-              stopFrameCapture();
-              stopWebcam();
-              if (wsRef.current) {
-                wsRef.current.close();
-                wsRef.current = null;
-              }
-              setIsConnected(false);
-              setWebcamReady(false);
-            }}
-            className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-all"
-          >
-            <span>🛑</span>
-            <span>Force Stop Camera</span>
+          <button onClick={() => { stopWebcam(); wsRef.current?.close(); setIsConnected(false); }}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-all">
+            🛑 Stop Camera
           </button>
         )}
       </div>
 
       <div className="bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 rounded-2xl shadow-2xl overflow-hidden border-2 border-gray-700">
+        {/* Header */}
         <div className="bg-gradient-to-r from-purple-600 via-pink-600 to-indigo-600 p-6">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-4xl font-bold flex items-center gap-3">
-                <span>✋</span>
-                <span>Gesture Racer</span>
-              </h1>
-              <p className="text-white/90 mt-2 text-lg">
-                Move your hand to different zones - TOP: up, BOTTOM: down, LEFT: left, RIGHT: right
-              </p>
+              <h1 className="text-4xl font-bold">✋ Gesture Racer</h1>
+              <p className="text-white/90 mt-1">Swipe your hand — UP · DOWN · LEFT · RIGHT</p>
             </div>
-            <div className="text-right">
-              <div className="flex items-center gap-3 bg-black/30 px-4 py-2 rounded-full">
-                <div className={`w-4 h-4 rounded-full ${handDetected ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
-                <span className="text-lg font-bold">{handDetected ? '✋ DETECTED' : 'NO HAND'}</span>
-              </div>
+            <div className={`flex items-center gap-2 px-4 py-2 rounded-full border ${handDetected ? 'bg-green-500/30 border-green-400' : 'bg-black/30 border-white/20'}`}>
+              <div className={`w-3 h-3 rounded-full ${handDetected ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
+              <span className="font-bold text-sm">{handDetected ? '✋ HAND DETECTED' : 'NO HAND'}</span>
             </div>
           </div>
         </div>
 
-        {error && (
-          <div className="bg-red-900/70 border-l-4 border-red-500 p-4 m-6">
-            <p className="text-red-200 font-bold">{error}</p>
-          </div>
-        )}
-
-        {/* Hidden raw webcam video used only for frame capture */}
-        <video
-          ref={videoRef}
-          muted
-          playsInline
-          style={{
-            position: 'absolute',
-            left: '-9999px',
-            width: '1px',
-            height: '1px',
-            opacity: 0,
-            pointerEvents: 'none'
-          }}
-        />
+        {error && <div className="bg-red-900/70 border-l-4 border-red-500 p-4 m-4"><p className="text-red-200 font-bold">{error}</p></div>}
 
         <div className="p-6 bg-gray-950">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Game Canvas - 2/3 width */}
+
+            {/* Game canvas */}
             <div className="lg:col-span-2 relative">
-              <canvas
-                ref={canvasRef}
-                width={CANVAS_WIDTH}
-                height={CANVAS_HEIGHT}
-                className="w-full rounded-xl shadow-2xl border-4 border-gray-700"
-              />
-              
+              <canvas ref={canvasRef} width={CANVAS_W} height={CANVAS_H}
+                className="w-full rounded-xl shadow-2xl border-4 border-gray-700" />
+
               {lastCommand && gameState.gameStarted && !gameState.gameOver && (
-                <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-gradient-to-r from-purple-500 to-pink-500 text-white px-8 py-4 rounded-full text-3xl font-bold animate-bounce shadow-2xl border-2 border-white">
-                  ✋ {lastCommand.toUpperCase()}
+                <div className={`absolute top-4 left-1/2 -translate-x-1/2 bg-gradient-to-r ${COLS[lastCommand]||'from-purple-500 to-pink-500'} text-white px-8 py-3 rounded-full text-2xl font-bold animate-bounce shadow-2xl`}>
+                  {lastCommand.toUpperCase()}
                 </div>
               )}
-              
+
               {gameState.gameOver && (
                 <div className="absolute inset-0 bg-black/90 flex items-center justify-center rounded-xl">
-                  <div className="text-center space-y-6 px-8">
-                    <div className="text-8xl mb-4">💥</div>
-                    <h2 className="text-5xl font-bold bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent">
-                      GAME OVER
-                    </h2>
-                    <div className="space-y-2">
-                      <p className="text-3xl font-bold text-white">Score: {gameState.score}</p>
-                      <p className="text-2xl text-yellow-400">Best: {highScore}</p>
-                      {justBeatHigh && (
-                        <p className="text-2xl text-yellow-400 animate-pulse">🏆 NEW HIGH SCORE! 🏆</p>
-                      )}
-                    </div>
-                    <button
-                      onClick={startGame}
-                      className="bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white px-12 py-4 rounded-full font-bold text-xl transition-all transform hover:scale-105 shadow-lg"
-                    >
+                  <div className="text-center space-y-5 px-8">
+                    <div className="text-8xl">💥</div>
+                    <h2 className="text-5xl font-bold bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent">GAME OVER</h2>
+                    <p className="text-3xl font-bold text-white">Score: {gameState.score}</p>
+                    <p className="text-2xl text-yellow-400">Best: {highScore}</p>
+                    {justBeatHigh && <p className="text-xl text-yellow-400 animate-pulse">🏆 NEW HIGH SCORE!</p>}
+                    <button onClick={startGame} className="bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white px-10 py-4 rounded-full font-bold text-xl transition-all hover:scale-105">
                       ✋ PLAY AGAIN
                     </button>
                   </div>
                 </div>
               )}
 
-              {(!gameState.gameStarted && !isConnected) && (
-                <div className="absolute inset-0 bg-gradient-to-br from-purple-900/95 to-pink-900/95 flex items-center justify-center rounded-xl backdrop-blur-sm">
-                  <div className="text-center space-y-8 px-8">
+              {!gameState.gameStarted && !isConnected && (
+                <div className="absolute inset-0 bg-gradient-to-br from-purple-900/95 to-pink-900/95 flex items-center justify-center rounded-xl">
+                  <div className="text-center space-y-6 px-8">
                     <div className="text-8xl animate-bounce">✋</div>
-                    <h2 className="text-5xl font-bold text-white">Ready for Gesture Control?</h2>
+                    <h2 className="text-4xl font-bold text-white">Ready to Swipe?</h2>
                     {highScore > 0 && (
-                      <div className="bg-yellow-500/20 border-2 border-yellow-500 rounded-lg p-4">
-                        <p className="text-yellow-400 text-2xl font-bold">High Score: {highScore}</p>
+                      <div className="bg-yellow-500/20 border-2 border-yellow-500 rounded-lg p-3">
+                        <p className="text-yellow-400 text-xl font-bold">High Score: {highScore}</p>
                       </div>
                     )}
-                    <button
-                      onClick={startGame}
-                      disabled={!webcamReady}
-                      className={`${webcamReady ? 'bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700' : 'bg-gray-600 cursor-not-allowed'} text-white px-12 py-5 rounded-full font-bold text-2xl transition-all transform hover:scale-110 shadow-2xl`}
-                    >
-                      {webcamReady ? '✋ START GAME' : '⏳ Waiting for camera...'}
+                    <button onClick={startGame} disabled={!ready}
+                      className={`${ready ? 'bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 hover:scale-105' : 'bg-gray-600 cursor-not-allowed'} text-white px-12 py-4 rounded-full font-bold text-xl transition-all`}>
+                      {mpStatus === 'loading' ? '⏳ Loading hand tracking...' : !webcamReady ? '⏳ Waiting for camera...' : '✋ START GAME'}
                     </button>
-                    <p className="text-gray-300">{webcamReady ? 'Camera ready! Show your hand to start.' : 'Please allow camera access'}</p>
+                    {ready && <p className="text-gray-300 text-sm">Show your hand → swipe in any direction!</p>}
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Live Video Feed - 1/3 width */}
+            {/* Sidebar */}
             <div className="space-y-4">
+              {/* Camera feed */}
               <div className="bg-gray-800 rounded-xl p-4 border-2 border-purple-500">
-                <h3 className="text-xl font-bold mb-3 text-purple-400">📹 Live Camera</h3>
-                {processedFrame ? (
-                  <img 
-                    src={processedFrame} 
-                    alt="Hand tracking" 
-                    className="w-full rounded-lg border-2 border-green-500"
-                  />
-                ) : (
-                  <div className="w-full aspect-video bg-gray-700 rounded-lg border-2 border-gray-600 overflow-hidden">
-                    {webcamReady ? (
-                      <video
-                        ref={previewVideoRef}
-                        muted
-                        playsInline
-                        autoPlay
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <p className="text-gray-400">Waiting for camera...</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-                <div className="mt-3 space-y-1">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-400">Hand Status:</span>
+                <h3 className="text-lg font-bold mb-3 text-purple-400">📹 Live Camera</h3>
+                <div className="relative rounded-lg overflow-hidden bg-gray-900 aspect-video">
+                  <video ref={videoRef} muted playsInline autoPlay
+                    className="w-full h-full object-cover [transform:scaleX(-1)]" />
+                  <canvas ref={overlayRef}
+                    className="absolute inset-0 w-full h-full [transform:scaleX(-1)]" />
+                  {!webcamReady && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <p className="text-gray-400 text-sm">Waiting for camera...</p>
+                    </div>
+                  )}
+                </div>
+                <div className="mt-3 space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Hand:</span>
                     <span className={`font-bold ${handDetected ? 'text-green-400' : 'text-red-400'}`}>
-                      {handDetected ? '✅ Detected' : '❌ Not Found'}
+                      {handDetected ? '✅ Detected' : '❌ Not found'}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-400">Current Gesture:</span>
-                    <span className="font-bold text-purple-400">{currentGesture.toUpperCase()}</span>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Last gesture:</span>
+                    <span className="font-bold text-purple-400 uppercase">{currentGesture}</span>
                   </div>
-                  <div className="text-xs text-gray-400 mt-2">
-                    {gestureDescription || 'Waiting for gesture...'}
-                  </div>
+                  <p className="text-xs text-gray-400 pt-1">{gestureInfo}</p>
                 </div>
               </div>
 
-              <div className="bg-gradient-to-br from-purple-600 to-pink-600 p-4 rounded-xl">
-                <h3 className="text-lg font-bold mb-2">✋ How to Play</h3>
+              {/* Controls */}
+              <div className="bg-gradient-to-br from-purple-700 to-pink-700 p-4 rounded-xl">
+                <h3 className="font-bold mb-3">✋ How to Play</h3>
                 <div className="space-y-2 text-sm">
-                  <div className="bg-white/20 px-3 py-2 rounded">
-                    <strong>☝️ TOP zone</strong> → Move UP
-                  </div>
-                  <div className="bg-white/20 px-3 py-2 rounded">
-                    <strong>👇 BOTTOM zone</strong> → Move DOWN
-                  </div>
-                  <div className="bg-white/20 px-3 py-2 rounded">
-                    <strong>👈 LEFT zone</strong> → Move LEFT
-                  </div>
-                  <div className="bg-white/20 px-3 py-2 rounded">
-                    <strong>👉 RIGHT zone</strong> → Move RIGHT
-                  </div>
+                  {[['☝️','Swipe UP','Airplane moves up'],['👇','Swipe DOWN','Airplane moves down'],
+                    ['👈','Swipe LEFT','Airplane moves left'],['👉','Swipe RIGHT','Airplane moves right']].map(([e,l,d])=>(
+                    <div key={l} className="bg-white/20 px-3 py-2 rounded flex gap-2 items-center">
+                      <span>{e}</span><div><strong>{l}</strong><span className="text-white/70"> — {d}</span></div>
+                    </div>
+                  ))}
                 </div>
-                <p className="text-xs mt-3 text-white/80">
-                  💡 Just move your hand to any zone - no need to count fingers!
-                </p>
+                <p className="text-xs mt-3 text-white/70">💡 Just swipe naturally — fast or slow both work!</p>
               </div>
-            </div>
-          </div>
-        </div>
 
-        <div className="p-6 bg-gray-900 border-t-2 border-gray-700">
-          <div className="grid md:grid-cols-2 gap-6">
-            <div className="bg-gradient-to-br from-purple-600 to-pink-600 p-6 rounded-xl">
-              <h3 className="text-xl font-bold mb-3">✋ Simple Controls</h3>
-              <div className="space-y-2 text-sm">
-                <div className="bg-white/20 px-3 py-2 rounded-lg">
-                  <strong>Move hand to TOP</strong> → Airplane goes UP
+              {/* Obstacles */}
+              <div className="bg-gradient-to-br from-indigo-700 to-blue-700 p-4 rounded-xl">
+                <h3 className="font-bold mb-2">🎯 Avoid These</h3>
+                <div className="grid grid-cols-2 gap-1 text-sm">
+                  <div>🦅 Birds</div><div>☁️ Clouds</div>
+                  <div>⚡ Lightning</div><div>🛸 UFOs</div>
                 </div>
-                <div className="bg-white/20 px-3 py-2 rounded-lg">
-                  <strong>Move hand to BOTTOM</strong> → Airplane goes DOWN
-                </div>
-                <div className="bg-white/20 px-3 py-2 rounded-lg">
-                  <strong>Move hand to LEFT</strong> → Airplane goes LEFT
-                </div>
-                <div className="bg-white/20 px-3 py-2 rounded-lg">
-                  <strong>Move hand to RIGHT</strong> → Airplane goes RIGHT
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-gradient-to-br from-indigo-600 to-blue-600 p-6 rounded-xl">
-              <h3 className="text-xl font-bold mb-3">🎯 Obstacles</h3>
-              <div className="space-y-2 text-sm">
-                <div>🦅 Birds - Avoid flying creatures</div>
-                <div>☁️ Clouds - Navigate through</div>
-                <div>⚡ Thunder - Watch out!</div>
-                <div>🛸 UFOs - Dodge alien ships</div>
               </div>
             </div>
           </div>
