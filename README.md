@@ -27,7 +27,7 @@ Control the airplane by swiping your hand in front of the camera.
 - Swipe **LEFT** → airplane moves left
 - Swipe **RIGHT** → airplane moves right
 
-**Tech:** MediaPipe Hand Landmarker (runs in browser — no server processing needed)
+**Tech:** MediaPipe Hand Landmarker runs entirely in the browser — no server processing needed.
 
 ---
 
@@ -60,8 +60,6 @@ Difficulty increases every 100 points.
 - 🏅 8 unique achievement badges
 - 🏆 High scores per game mode
 - 📈 Progress bars toward legend status
-
-**Achievements:**
 
 | Badge | Requirement |
 |-------|------------|
@@ -99,32 +97,82 @@ Difficulty increases every 100 points.
 - Chrome browser
 - Webcam + Microphone
 
-### Backend
+---
+
+### Option A — Docker (easiest)
+
+Make sure [Docker Desktop](https://www.docker.com/products/docker-desktop/) is installed and running.
+
+```bash
+# Clone the repo
+git clone https://github.com/harshitayadavv/SkyRacer.git
+cd SkyRacer
+
+# Create backend .env
+cp backend/.env.production.example backend/.env
+# Edit backend/.env with your credentials
+
+# Create frontend .env
+echo "VITE_API_URL=http://localhost:8000" > frontend/.env
+echo "VITE_GOOGLE_CLIENT_ID=your_google_client_id" >> frontend/.env
+
+# Build and start everything
+docker-compose up --build
+```
+
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:3000 |
+| Backend | http://localhost:8000 |
+| API Docs | http://localhost:8000/docs |
+
+```bash
+# Stop everything
+docker-compose down
+
+# Rebuild after code changes
+docker-compose up --build
+
+# Run in background
+docker-compose up -d
+```
+
+---
+
+### Option B — Manual Setup
+
+**Backend:**
 ```bash
 cd backend
 python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # Mac/Linux
+
+# Windows
+venv\Scripts\activate
+# Mac/Linux
+source venv/bin/activate
+
 pip install -r requirements.txt
 
-# Create backend/.env
-cp .env.production.example .env
-# Fill in your credentials
-
+# Create backend/.env (see Environment Variables below)
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### Frontend
+**Frontend (new terminal):**
 ```bash
 cd frontend
 npm install
 
-# Create frontend/.env
-echo "VITE_API_URL=http://localhost:8000" > .env
-echo "VITE_GOOGLE_CLIENT_ID=your_client_id" >> .env
-
+# Create frontend/.env (see Environment Variables below)
 npm run dev
 ```
+
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:5173 |
+| Backend | http://localhost:8000 |
+| API Docs | http://localhost:8000/docs |
+
+---
 
 ### Environment Variables
 
@@ -139,6 +187,8 @@ ACCESS_TOKEN_EXPIRE_MINUTES=10080
 ENVIRONMENT=development
 ```
 
+> Generate a secret key: `openssl rand -hex 32`
+
 **`frontend/.env`**
 ```env
 VITE_API_URL=http://localhost:8000
@@ -152,11 +202,14 @@ VITE_GOOGLE_CLIENT_ID=your_google_client_id
 ```
 SkyRacer/
 ├── docker-compose.yml
+├── README.md
+├── .gitignore
 ├── backend/
 │   ├── dockerfile
 │   ├── requirements.txt
 │   ├── main.py
 │   ├── api.py
+│   ├── .env.production.example
 │   ├── games/
 │   │   ├── gesture_game.py
 │   │   ├── gesture_websocket.py
@@ -169,6 +222,7 @@ SkyRacer/
 │       └── utils.py
 └── frontend/
     ├── dockerfile
+    ├── package.json
     └── src/
         ├── components/
         │   ├── GestureGame.jsx
@@ -227,6 +281,8 @@ GitHub: [@harshitayadavv](https://github.com/harshitayadavv)
 | Achievements | ✅ Complete |
 | Docker Support | ✅ Complete |
 | Deployed (Vercel + Render) | ✅ Live |
+| Global Leaderboard | 🔜 Coming Soon |
+| Mobile App | 🔜 Coming Soon |
 
 **Latest:** v2.0.0 — Browser-based gesture detection 🎉
 
