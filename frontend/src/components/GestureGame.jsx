@@ -215,7 +215,7 @@ function GestureGame({ onBack }) {
     // Dominant axis wins
     let gesture;
     if (adx >= ady) {
-      gesture = dx > 0 ? 'right' : 'left';
+      gesture = dx > 0 ? 'left' : 'right';
     } else {
       gesture = dy > 0 ? 'down' : 'up';
     }
